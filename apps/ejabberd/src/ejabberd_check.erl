@@ -49,7 +49,7 @@ check_database_modules() ->
 check_database_module(odbc) ->
     check_modules(odbc, [odbc, odbc_app, odbc_sup, ejabberd_odbc, ejabberd_odbc_sup, odbc_queries]);
 check_database_module(mysql) ->
-    check_modules(mysql, [mysql, mysql_auth, mysql_conn, mysql_recv]);
+    check_modules(mysql, [bank, bank_mysql]);
 check_database_module(pgsql) ->
     check_modules(pgsql, [pgsql, pgsql_proto, pgsql_tcp, pgsql_util]).
 

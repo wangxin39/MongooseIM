@@ -72,6 +72,8 @@
 -define(MAX_TRANSACTION_RESTARTS, 10).
 -define(PGSQL_PORT, 5432).
 -define(MYSQL_PORT, 3306).
+-define(WORKER_COUNT, 5).
+-define(DB_REF, ejd).
 
 -define(TRANSACTION_TIMEOUT, 60000). % milliseconds
 -define(KEEPALIVE_TIMEOUT, 60000).
@@ -200,7 +202,7 @@ init([Host, StartInterval]) ->
 connecting(connect, #state{host = Host} = State) ->
     ConnectRes = case db_opts(Host) of
 		     [mysql | Args] ->
-			 apply(fun mysql_connect/5, Args);
+			 apply(fun mysql_connect/6, Args);
 		     [pgsql | Args] ->
 			 apply(fun pgsql_connect/5, Args);
 		     [odbc | Args] ->
@@ -290,9 +292,7 @@ terminate(_Reason, _StateName, State) ->
     ejabberd_odbc_sup:remove_pid(State#state.host, self()),
     case State#state.db_type of
 	mysql ->
-	    %% old versions of mysql driver don't have the stop function
-	    %% so the catch
-	    catch mysql_conn:stop(State#state.db_ref);
+	    bank:stop_pool(?DB_REF);
 	_ ->
 	    ok
     end,
@@ -437,8 +437,7 @@ sql_query_internal(Query) ->
                   pgsql_to_odbc(pgsql:squery(State#state.db_ref, Query));
               mysql ->
                   ?DEBUG("MySQL, Send query~n~p~n", [Query]),
-                  R = mysql_to_odbc(mysql_conn:fetch(State#state.db_ref,
-						     Query, self())),
+                  R = mysql_to_odbc(bank:sql_query(?DB_REF, Query)),
                   %% ?INFO_MSG("MySQL, Received result~n~p~n", [R]),
                   R
           end,
@@ -450,19 +449,13 @@ sql_query_internal(Query) ->
     end.
 
 %% Generate the OTP callback return tuple depending on the driver result.
-abort_on_driver_error({error, "query timed out"} = Reply, From) ->
-    %% mysql driver error
-    ?GEN_FSM:reply(From, Reply),
-    {stop, timeout, get(?STATE_KEY)};
-abort_on_driver_error({error, "Failed sending data on socket" ++ _} = Reply,
-		      From) ->
-    %% mysql driver error
-    ?GEN_FSM:reply(From, Reply),
-    {stop, closed, get(?STATE_KEY)};
+abort_on_driver_error({remote_error, ErrNo, SqlState, Message} = Reply, From) ->
+    ?DEBUG("MySQL error: ~p", [Reply]),
+    ?GEN_FSM:reply({error, Message}),
+    {next_state, session_established, get(?STATE_KEY)};
 abort_on_driver_error(Reply, From) ->
     ?GEN_FSM:reply(From, Reply),
     {next_state, session_established, get(?STATE_KEY)}.
-
 
 %% == pure ODBC code
 
@@ -508,34 +501,29 @@ pgsql_item_to_odbc(_) ->
 
 %% part of init/1
 %% Open a database connection to MySQL
-mysql_connect(Server, Port, DB, Username, Password) ->
-    case mysql_conn:start(Server, Port, Username, Password, DB, fun log/3) of
-        {ok, Ref} ->
-            mysql_conn:fetch(Ref, ["set names 'utf8';"], self()),
-            mysql_conn:fetch(Ref, ["SET SESSION query_cache_type=1;"], self()),
-            {ok, Ref};
+mysql_connect(Server, Port, DB, Username, Password, WorkerCount) ->
+    InitFun = fun() ->
+            {ok, State} = bank_mysql:connect(Server, Port, Username, Password, DB),
+            {ok, _, _, State2} = bank_mysql:sql_query(<<"set names 'utf8'">>, State),
+            {ok, _, _, State3} = bank_mysql:sql_query(<<"set session query_cache_type=1;">>, State2),
+            {ok, bank_mysql, State3}
+    end,
+    case bank:start_pool(?DB_REF, WorkerCount, [{init_fun, InitFun}]) of
+        ok ->
+            {ok, bank_sup};
         Err ->
             Err
     end.
 
 %% Convert MySQL query result to Erlang ODBC result formalism
-mysql_to_odbc({updated, MySQLRes}) ->
-    {updated, mysql:get_result_affected_rows(MySQLRes)};
-mysql_to_odbc({data, MySQLRes}) ->
-    mysql_item_to_odbc(mysql:get_result_field_info(MySQLRes),
-		       mysql:get_result_rows(MySQLRes));
-mysql_to_odbc({error, MySQLRes}) when is_list(MySQLRes) ->
-    {error, MySQLRes};
-mysql_to_odbc({error, MySQLRes}) ->
-    {error, mysql:get_result_reason(MySQLRes)}.
-
-%% When tabular data is returned, convert it to the ODBC formalism
-mysql_item_to_odbc(Columns, Recs) ->
-    %% For now, there is a bug and we do not get the correct value from MySQL
-    %% module:
+mysql_to_odbc({ok, AffRows, _}) ->
+    {updated, AffRows};
+mysql_to_odbc({rows, []}) ->
+    {selected, [], []};
+mysql_to_odbc({rows, [OneRow|_] = Rows}) ->
     {selected,
-     [element(2, Column) || Column <- Columns],
-     [list_to_tuple(Rec) || Rec <- Recs]}.
+        [ColName || {ColName, _} <- OneRow],
+        [ list_to_tuple([ Value || {_, Value} <- Row ]) || Row <- Rows ]}.
 
 % log function used by MySQL driver
 log(Level, Format, Args) ->
@@ -557,9 +545,14 @@ db_opts(Host) ->
 	    [pgsql, Server, Port, DB, User, Pass];
 	%% Default mysql port
 	{mysql, Server, DB, User, Pass} ->
-	    [mysql, Server, ?MYSQL_PORT, DB, User, Pass];
+	    [mysql, Server, ?MYSQL_PORT, DB, User, Pass, ?WORKER_COUNT];
 	{mysql, Server, Port, DB, User, Pass} when is_integer(Port) ->
-	    [mysql, Server, Port, DB, User, Pass];
+	    [mysql, Server, Port, DB, User, Pass, ?WORKER_COUNT];
+    {mysql, Server, DB, User, Pass, WorkerCount} when is_integer(WorkerCount) ->
+	    [mysql, Server, ?MYSQL_PORT, DB, User, Pass, WorkerCount];
+	{mysql, Server, Port, DB, User, Pass, WorkerCount} when is_integer(Port) and is_integer(WorkerCount) ->
+	    [mysql, Server, Port, DB, User, Pass, WorkerCount];
+
 	SQLServer when is_list(SQLServer) ->
 	    [odbc, SQLServer]
     end.

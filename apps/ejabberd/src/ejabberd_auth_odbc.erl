@@ -65,19 +65,18 @@ check_password(User, Server, Password) ->
 	LUser ->
 	    Username = ejabberd_odbc:escape(LUser),
 	    LServer = jlib:nameprep(Server),
-            PasswdStr = Password,
 	    try odbc_queries:get_password(LServer, Username) of
-		{selected, ["password"], [{PasswdStr}]} ->	
-		    Password /= <<"">>; %% Password is correct, and not empty
-		{selected, ["password"], [{_Password2}]} ->
-		    false; %% Password is not correct
-		{selected, ["password"], []} ->
-		    false; %% Account does not exist
-		{error, _Error} ->
-		    false %% Typical error is that table doesn't exist
+            {selected, [<<"password">>], [{Password}]} ->	
+		        Password /= <<"">>; %% Password is correct, and not empty
+            {selected, [<<"password">>], [{_Password2}]} ->
+		        false; %% Password is not correct
+            {selected, _, []} ->
+		        false; %% Account does not exist
+		    {error, _Error} ->
+		        false %% Typical error is that table doesn't exist
 	    catch
-		_:_ ->
-		    false %% Typical error is database not accessible
+		    _:_ ->
+		        false %% Typical error is database not accessible
 	    end
     end.
 
@@ -92,7 +91,7 @@ check_password(User, Server, Password, Digest, DigestGen) ->
 	    try odbc_queries:get_password(LServer, Username) of
 		%% Account exists, check if password is valid
 
-		{selected, ["password"], [{Passwd}]} ->
+        {selected, [<<"password">>], [{Passwd}]} ->
 		    DigRes = if
 				 Digest /= <<"">> ->
 				     Digest == DigestGen(Passwd);
@@ -104,7 +103,7 @@ check_password(User, Server, Password, Digest, DigestGen) ->
 		       true ->
 			    (Passwd == Password) and (Password /= <<"">>)
 		    end;
-		{selected, ["password"], []} ->
+        {selected, _, []} ->
 		    false; %% Account does not exist
 		{error, _Error} ->
 		    false %% Typical error is that table doesn't exist
@@ -158,7 +157,7 @@ dirty_get_registered_users() ->
 get_vh_registered_users(Server) ->
     LServer = jlib:nameprep(Server),
     case catch odbc_queries:list_users(LServer) of
-	{selected, ["username"], Res} ->
+    {selected, [<<"username">>], Res} ->
 	    [{U, LServer} || {U} <- Res];
 	_ ->
 	    []
@@ -167,7 +166,7 @@ get_vh_registered_users(Server) ->
 get_vh_registered_users(Server, Opts) ->
     LServer = jlib:nameprep(Server),
     case catch odbc_queries:list_users(LServer, Opts) of
-	{selected, ["username"], Res} ->
+    {selected, [<<"username">>], Res} ->
 	    [{U, LServer} || {U} <- Res];
 	_ ->
 	    []
@@ -199,7 +198,7 @@ get_password(User, Server) ->
 	    Username = ejabberd_odbc:escape(LUser),
 	    LServer = jlib:nameprep(Server),
 	    case catch odbc_queries:get_password(LServer, Username) of
-		{selected, ["password"], [{Password}]} ->
+        {selected, [<<"passsword">>], [{Password}]} ->
 		    Password;
 		_ ->
 		    false
@@ -214,7 +213,7 @@ get_password_s(User, Server) ->
 	    Username = ejabberd_odbc:escape(LUser),
 	    LServer = jlib:nameprep(Server),
 	    case catch odbc_queries:get_password(LServer, Username) of
-		{selected, ["password"], [{Password}]} ->
+        {selected, [<<"password">>], [{Password}]} ->
 		    Password;
 		_ ->
 		    <<"">>
@@ -230,9 +229,9 @@ is_user_exists(User, Server) ->
 	    Username = ejabberd_odbc:escape(LUser),
 	    LServer = jlib:nameprep(Server),
 	    try odbc_queries:get_password(LServer, Username) of
-		{selected, ["password"], [{_Password}]} ->
+        {selected, [<<"password">>], [{_Password}]} ->
 		    true; %% Account exists
-		{selected, ["password"], []} ->
+        {selected, _, []} ->
 		    false; %% Account does not exist
 		{error, Error} ->
 		    {error, Error} %% Typical error is that table doesn't exist
@@ -271,9 +270,9 @@ remove_user(User, Server, Password) ->
 			Result = odbc_queries:del_user_return_password(
 				   LServer, Username, Pass),
 			case Result of
-			    {selected, ["password"], [{PasswdStr}]} ->
+                {selected, [<<"password">>], [{PasswdStr}]} ->
 				ok;
-			    {selected, ["password"], []} ->
+			    {selected, _, []} ->
 				not_exists;
 			    _ ->
 				not_allowed
