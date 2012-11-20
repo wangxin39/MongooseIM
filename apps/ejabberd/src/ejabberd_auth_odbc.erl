@@ -198,7 +198,7 @@ get_password(User, Server) ->
 	    Username = ejabberd_odbc:escape(LUser),
 	    LServer = jlib:nameprep(Server),
 	    case catch odbc_queries:get_password(LServer, Username) of
-        {selected, [<<"passsword">>], [{Password}]} ->
+        {selected, [<<"password">>], [{Password}]} ->
 		    Password;
 		_ ->
 		    false
