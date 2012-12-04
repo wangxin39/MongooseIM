@@ -163,7 +163,7 @@ roster_version(LServer ,LUser) ->
 			case odbc_queries:get_roster_version(ejabberd_odbc:escape(LServer),
                                                  ejabberd_odbc:escape(LUser)) of
 				{selected, [<<"version">>], [{Version}]} -> Version;
-				{selected, [<<"version">>], []} -> not_found
+				{selected, _, []} -> not_found
 			end;
 		false ->
 			roster_hash(ejabberd_hooks:run_fold(roster_get, LServer, [], [US]))
@@ -195,7 +195,7 @@ process_iq_get(From, To, #iq{sub_el = SubEl} = IQ) ->
                         {selected, [<<"version">>], [{NewVersion}]} ->
                             {lists:map(fun item_to_xml/1,
                                        ejabberd_hooks:run_fold(roster_get, To#jid.lserver, [], [US])), NewVersion};
-                        {selected, [<<"version">>], []} ->
+                        {selected, _, []} ->
                             RosterVersion = sha:sha(term_to_binary(now())),
                             {atomic, {updated,1}} = odbc_queries:sql_transaction(LServer,
                                                                                  fun() ->
@@ -325,16 +325,16 @@ process_item_set(From, To, {xmlelement, _Name, Attrs, Els}) ->
             Username = ejabberd_odbc:escape(LUser),
             SJID = ejabberd_odbc:escape(jlib:jid_to_binary(LJID)),
             F = fun() ->
-                        {selected,
-                         [<<"username">>, <<"jid">>, <<"nick">>, <<"subscription">>,
+                        {selected, Fields, Res}
+                            = odbc_queries:get_roster_by_jid(LServer, Username, SJID),
+                        ProperFields = [<<"username">>, <<"jid">>, <<"nick">>, <<"subscription">>,
                           <<"ask">>, <<"askmessage">>, <<"server">>, <<"subscribe">>, <<"type">>],
-                         Res} = odbc_queries:get_roster_by_jid(LServer, Username, SJID),
-                        Item = case Res of
-                                   [] ->
+                        Item = case {Fields, Res} of
+                                   {_, []} ->
                                        #roster{usj = {LUser, LServer, LJID},
                                                us = {LUser, LServer},
                                                jid = LJID};
-                                   [I] ->
+                                   {ProperFields, [I]} ->
                                        R = raw_to_record(LServer, I),
                                        case R of
                                            %% Bad JID in database:
@@ -538,16 +538,13 @@ process_subscription(Direction, User, Server, JID1, Type, Reason) ->
                             R = raw_to_record(LServer, I),
                             Groups =
                                 case odbc_queries:get_roster_groups(LServer, Username, SJID) of
-                                    {selected, ["grp"], JGrps} when is_list(JGrps) ->
+                                    {selected, [<<"grp">>], JGrps} when is_list(JGrps) ->
                                         [JGrp || {JGrp} <- JGrps];
                                     _ ->
                                         []
                                 end,
                             R#roster{groups = Groups};
-                        {selected,
-                         [<<"username">>, <<"jid">>, <<"nick">>, <<"subscription">>, <<"ask">>,
-                          <<"askmessage">>, <<"server">>, <<"subscribe">>, <<"type">>],
-                         []} ->
+                        {selected, _, []} ->
                             #roster{usj = {LUser, LServer, LJID},
                                     us = {LUser, LServer},
                                     jid = LJID}
