@@ -56,6 +56,7 @@ start(normal, _Args) ->
     connect_nodes(),
     {ok, _} = Sup = ejabberd_sup:start_link(),
     ejabberd_rdbms:start(),
+    ejabberd_bank:start(),
     ejabberd_auth:start(),
     cyrsasl:start(),
     %% Profiling
