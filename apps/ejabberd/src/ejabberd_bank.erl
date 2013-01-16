@@ -107,7 +107,7 @@ set_password(Server, Username, Password) ->
 %% @end
 %%--------------------------------------------------------------------
 start_link(Host) -> 
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [Host], []).
+    gen_server:start_link(?MODULE, [Host], []).
 
 %%%===================================================================
 %%% gen_server callbacks
