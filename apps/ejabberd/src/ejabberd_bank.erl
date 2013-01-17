@@ -18,7 +18,11 @@
          users_number/2,
          get_password/2,
          set_password/3,
-         transaction/1]).
+         get_last/2,
+         set_last/4,
+         del_last/2,
+         transaction/1,
+         update_fun/6]).
 
 %% Worker starter
 -export([start/0]).
@@ -82,18 +86,23 @@ get_password(Server, Username) ->
     bank:execute(Server, get_password, [Username]).
 
 set_password(Server, Username, Password) ->
-    T = fun(Module, State) ->
-            NewState = case Module:execute(update_password, [Password, Username], State) of
-                {ok, 1, 0, State2} ->
-                    State2;
-                {ok, 0, 0, State2} ->
-                    {ok, 1, 0, State3} = Module:execute(add_user,
-                                                        [Username, Password], State2),
-                    State3
-            end,
-            {ok, ok, NewState}
-    end,
+    T = update_fun(get_password, [Username],
+                   update_password, [Password, Username],
+                   add_user, [Username, Password]),
     bank:batch(Server, transaction(T)).
+
+get_last(Server, Username) ->
+    bank:execute(Server, get_last, [Username]).
+
+set_last(Server, Username, Seconds, State) ->
+    T = update_fun(get_last, [Username],
+                   update_last, [Seconds, State, Username],
+                   add_last, [Username, Seconds, State]),
+    bank:batch(Server, transaction(T)).
+
+del_last(Server, Username) ->
+    bank:execute(Server, del_last, [Username]).
+
 
 %%%===================================================================
 %%% API
@@ -130,14 +139,17 @@ init([Host]) ->
             {ok, State} = apply(Driver, connect, Args),
             {ok, 0, 0, State2} = Driver:sql_query(<<"set names 'utf8'">>, State),
             {ok, 0, 0, State3} = Driver:sql_query(<<"set session query_cache_type=1">>, State2),
-            {ok, Driver, State3}
+            NewState = lists:foldl(
+                    fun({Name, Query}, AccState) ->
+                            {ok, CurrState} = Driver:prepare(Name, Query, AccState),
+                            CurrState
+                    end, State3, prepared_statements()),
+            {ok, Driver, NewState}
     end,
     case bank:start_pool(Host, WorkerCount, [{init_fun, InitFun}]) of
         ok ->
-            _ = [bank:prepare(Host, Name, Query) ||
-                    {Name, Query} <- prepared_statements()],
             {ok, #state{host = Host,
-                driver = Driver}};
+                        driver = Driver}};
         Error ->
             {stop, Error}
     end.
@@ -215,6 +227,20 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+update_fun(SelectStmt, SelectArgs, UpdateStmt, UpdateArgs, InsertStmt, InsertArgs) ->
+    fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(SelectStmt, SelectArgs, State),
+            NewState = case Module:fetch_all(State2) of
+                {rows, [], State3} ->
+                    {ok, 1, 0, State4} = Module:execute(InsertStmt, InsertArgs, State3),
+                    State4;
+                {rows, _, State3} ->
+                    {ok, _, 0, State4} = Module:execute(UpdateStmt, UpdateArgs, State3),
+                    State4
+            end,
+            {ok, ok, NewState}
+    end.
+
 transaction(TransactionFun) ->
     fun(Module, State) ->
             {ok, 0, 0, State2} = Module:sql_query(<<"begin">>, State),
@@ -230,20 +256,34 @@ transaction(TransactionFun) ->
     end.
 
 prepared_statements() ->
-    [{add_user, <<"insert into users(username, password) values (?, ?)">>},
-     {del_user, <<"delete from users where username = ?">>},
-     {del_user_password, <<"delete from users where username = ? and password = ?">>},
-     {list_users, <<"select username from users">>},
+    [{add_user,
+      <<"insert into users(username, password) values (?, ?)">>},
+     {del_user,
+      <<"delete from users where username = ?">>},
+     {del_user_password,
+      <<"delete from users where username = ? and password = ?">>},
+     {list_users,
+      <<"select username from users">>},
      {list_users_limit,
       <<"select username from users order by username limit ? offset ?">>},
      {list_users_prefix,
-      <<"select username from users where username like ? "
-        "order by username limit ? offset ?">>},
-     {users_number, <<"select count(*) as users_number from users">>},
+      <<"select username from users where username like ? order by username limit ? offset ?">>},
+     {users_number,
+      <<"select count(*) as users_number from users">>},
      {users_number_prefix,
       <<"select count(*) as users_number from users where username like ?">>},
-     {get_password, <<"select password from users where username = ?">>},
-     {update_password, <<"update users set password = ? where username = ?">>}].
+     {get_password,
+      <<"select password from users where username = ?">>},
+     {update_password,
+      <<"update users set password = ? where username = ?">>},
+     {get_last,
+      <<"select seconds, state from last where username = ?">>},
+     {update_last,
+      <<"update last set seconds = ?, state = ? where username = ?">>},
+     {add_last,
+      <<"insert into last(username, seconds, state) values (?, ?, ?)">>},
+     {del_last,
+      <<"delete from last where username = ?">>}].
 
 %%%===================================================================
 %%% Worker starter
