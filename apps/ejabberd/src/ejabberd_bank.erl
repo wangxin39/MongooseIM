@@ -21,6 +21,17 @@
          get_last/2,
          set_last/4,
          del_last/2,
+         get_default_privacy_list/2,
+         set_default_privacy_list/3,
+         del_default_privacy_list/2,
+         get_privacy_list_data/3,
+         get_privacy_list_data_by_id/2,
+         get_privacy_list_names/2,
+         get_privacy_list_id/3,
+         del_privacy_list/3,
+         del_privacy_lists/2,
+         set_privacy_list/4,
+         to_bool/1,
          transaction/1,
          update_fun/6]).
 
@@ -103,6 +114,89 @@ set_last(Server, Username, Seconds, State) ->
 del_last(Server, Username) ->
     bank:execute(Server, del_last, [Username]).
 
+get_default_privacy_list(Server, Username) ->
+    bank:execute(Server, get_default_privacy_list, [Username]).
+
+set_default_privacy_list(Server, Username, Name) ->
+    T = fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(get_privacy_list_by_name,
+                                                     [Username, Name], State),
+            case Module:fetch_all(State2) of
+                {rows, [], State3} ->
+                    {ok, {error, not_found}, State3};
+                {rows, _, State3} ->
+                    F = update_fun(get_default_privacy_list, [Username],
+                                   update_default_privacy_list, [Name, Username],
+                                   add_default_privacy_list, [Username, Name]),
+                    F(Module, State3)
+            end
+    end,
+    bank:batch(Server, transaction(T)).
+
+del_default_privacy_list(Server, Username) ->
+    bank:execute(Server, del_default_privacy_list, [Username]).
+
+get_privacy_list_id(Server, Username, SName) ->
+    bank:execute(Server, get_privacy_list_id, [Username, SName]).
+
+get_privacy_list_data(Server, Username, SName) ->
+    bank:execute(Server, get_privacy_list_data, [Username, SName]).
+
+get_privacy_list_data_by_id(Server, ID) ->
+    bank:execute(Server, get_privacy_list_data_by_id, [ID]).
+
+get_privacy_list_names(Server, Username) ->
+    bank:execute(Server, get_privacy_list_names, [Username]).
+
+del_privacy_list(Server, Username, Name) ->
+    T = fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(get_default_privacy_list, [Username], State),
+            case Module:fetch_all(State2) of
+                {rows, [], State3} ->
+                    {ok, _, _, State4} = Module:execute(del_privacy_list, [Username, Name], State3),
+                    {ok, {result, []}, State4};
+                {rows, [[{<<"name">>, Default}]], State3} ->
+                    case Name == Default of
+                        true ->
+                            {error, conflict};
+                        _ ->
+                            {ok, _, _, State4} = Module:execute(del_privacy_list, [Username, Name], State3),
+                            {ok, {result, []}, State4}
+                    end
+            end
+    end,
+    bank:batch(Server, transaction(T)).
+
+del_privacy_lists(Server, Username) ->
+    Value = <<Username/binary, "@", Server/binary>>,
+    T = fun(Module, State) ->
+            {ok, _, _, State2} = Module:execute(del_privacy_lists, [Username], State),
+            {ok, _, _, State3} = Module:execute(del_privacy_lists_data, [Value], State2),
+            {ok, _, _, State4} = Module:execute(del_default_privacy_list, [Username], State3),
+           {ok, ok, State4}
+    end,
+    bank:batch(Server, transaction(T)). 
+
+set_privacy_list(Server, Username, Name, Items) ->
+    T = fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(get_privacy_list_id, [Username, Name], State),
+            {ID, NewState} = case Module:fetch_all(State2) of
+                {rows, [], State3} ->
+                    {ok, _, _, State4} = Module:execute(add_privacy_list, [Username, Name], State3),
+                    {result_set, _, State5} = Module:execute(get_privacy_list_id, [Username, Name], State4),
+                    {rows, [[I]], State6} = Module:fetch_all(State5),
+                    {I, State6};
+                {rows, [[I]], State3} ->
+                    {I, State3}
+            end,
+            {ok, _, _, NewState1} = Module:execute(del_privacy_list_data, [ID], NewState),
+            NewState2 = lists:foldl(fun(Item, AccState) ->
+                        {ok, _, _, CurrState} = Module:execute(add_privacy_list_data, [ID | Item], AccState),
+                        CurrState
+                    end, NewState1, Items),
+            {ok, {result, []}, NewState2}
+    end,
+    bank:batch(Server, transaction(T)).
 
 %%%===================================================================
 %%% API
@@ -146,6 +240,7 @@ init([Host]) ->
                     end, State3, prepared_statements()),
             {ok, Driver, NewState}
     end,
+
     case bank:start_pool(Host, WorkerCount, [{init_fun, InitFun}]) of
         ok ->
             {ok, #state{host = Host,
@@ -249,7 +344,7 @@ transaction(TransactionFun) ->
                 {ok, 0, 0, State4} = Module:sql_query(<<"commit">>, State3),
                 {ok, {ok, Result}, State4}
             catch
-                _:_ ->
+                _:_Error ->
                     {ok, 0, 0, State5} = Module:sql_query(<<"rollback">>, State2),
                     {ok, aborted, State5}
             end
@@ -283,7 +378,41 @@ prepared_statements() ->
      {add_last,
       <<"insert into last(username, seconds, state) values (?, ?, ?)">>},
      {del_last,
-      <<"delete from last where username = ?">>}].
+      <<"delete from last where username = ?">>},
+     {get_default_privacy_list,
+      <<"select name from privacy_default_list where username = ?">>},
+     {update_default_privacy_list,
+      <<"update privacy_default_list set name = ? where username = ?">>},
+     {add_default_privacy_list,
+      <<"insert into privacy_default_list(username, name) values (?, ?)">>},
+     {del_default_privacy_list,
+      <<"delete from privacy_default_list where username = ?">>},
+     {get_privacy_list_by_name,
+      <<"select name from privacy_list where username = ? and name = ?">>},
+     {get_privacy_list_id,
+      <<"select id from privacy_list where username = ? and name = ?">>},
+     {get_privacy_list_data,
+      <<"select * from privacy_list_data where "
+        "id = (select id from privacy_list where username = ? and name = ?) "
+        "order by ord">>},
+     {get_privacy_list_data_by_id,
+      <<"select * from privacy_list_data where id = ? order by ord">>},
+     {get_privacy_list_names,
+      <<"select name from privacy_list where username = ?">>},
+     {del_privacy_list,
+      <<"delete from privacy_list where username = ? and name = ?">>},
+     {del_privacy_lists,
+      <<"delete from privacy_list where username = ?">>},
+     {del_privacy_list_data,
+      <<"delete from privacy_list_data where id = ?">>},
+     {del_privacy_lists_data,
+      <<"delete from privacy_list_data where value = ?">>},
+     {add_privacy_list,
+      <<"insert into privacy_list(username, name) values (?, ?)">>},
+     {add_privacy_list_data,
+      <<"insert into privacy_list_data(id, t, value, action, ord, match_all, "
+        "match_iq, match_message, match_presence_in, match_presence_out) values "
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)">>}].
 
 %%%===================================================================
 %%% Worker starter
@@ -320,3 +449,10 @@ needs_bank(Host) ->
         _ -> true
     end.
 
+
+%%%===================================================================
+%%% Helpers
+%%%===================================================================
+
+to_bool(1) -> true;
+to_bool(0) -> false.
