@@ -30,6 +30,9 @@
          del_privacy_list/3,
          del_privacy_lists/2,
          set_privacy_list/4,
+         set_private_data/3,
+         get_private_data/3,
+         del_private_data/2,
          to_bool/1,
          transaction/1,
          update_fun/6]).
@@ -183,6 +186,31 @@ set_privacy_list(Server, Username, Name, Items) ->
     end,
     bank:batch(Server, transaction(T)).
 
+set_private_data(Server, Username, Elements) ->
+    T = fun(Module, State) ->
+            NewState = lists:foldl(fun(Element, AccState) ->
+                            {xmlelement, _, Attrs, _} = Element,
+                            XMLNS = xml:get_attr_s(<<"xmlns">>, Attrs),
+                            SElement = xml:element_to_binary(Element),
+                            Update = update_fun(get_private_data,
+                                                [Username, XMLNS],
+                                                update_private_data,
+                                                [SElement, Username, XMLNS],
+                                                add_private_data,
+                                                [Username, XMLNS, SElement]),
+                            {ok, ok, CurrState} = Update(Module, AccState),
+                            CurrState
+                    end, State, Elements),
+           {ok, ok, NewState}
+    end,
+    bank:batch(Server, transaction(T)). 
+
+get_private_data(Server, Username, XMLNS) ->
+    bank:execute(Server, get_private_data, [Username, XMLNS]).
+
+del_private_data(Server, Username) ->
+    bank:execute(Server, del_private_data, [Username]).
+
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
@@ -277,7 +305,16 @@ prepared_statements() ->
      {add_privacy_list_data,
       <<"insert into privacy_list_data(id, t, value, action, ord, match_all, "
         "match_iq, match_message, match_presence_in, match_presence_out) values "
-        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)">>}].
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)">>},
+     {get_private_data,
+      <<"select data from private_storage where "
+        "username = ? and namespace = ?">>},
+     {update_private_data,
+      <<"update private_storage set data = ? where username = ? and namespace = ?">>},
+     {add_private_data,
+      <<"insert into private_storage(username, namespace, data) values (?, ?, ?)">>},
+     {del_private_data,
+      <<"delete from private_storage where username = ?">>}].
 
 %%%===================================================================
 %%% Bank pool starter
