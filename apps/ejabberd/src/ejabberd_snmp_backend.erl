@@ -26,7 +26,10 @@
          mnesia_roster_groups/0,
          odbc_privacy_list_length/1,
          odbc_roster_size/1,
-         odbc_roster_groups/1
+         odbc_roster_groups/1,
+         bank_privacy_list_length/1,
+         bank_roster_size/1,
+         bank_roster_groups/1
         ]).
 
 %% This is one of the gen_mod modules with different backends
@@ -70,11 +73,12 @@ registered_count() ->
 %% Furthermore, they must be present in mnesia table local_config.
 %% No module may appear with two or more different backends simultaneously
 %% (impossible anyway, but mentioning it can't hurt).
--spec backends(ejabberd_module()) -> mnesia | {odbc, ejabberd_host()} | none | {error, term()}.
+-spec backends(ejabberd_module()) -> mnesia | {odbc, ejabberd_host()} | {bank, ejabberd_host()} | none | {error, term()}.
 backends(Module) ->
     %% extend if/when more backends appear (see also _1_)
     MnesiaBackend = Module,
     OdbcBackend = list_to_atom(atom_to_list(Module) ++ "_odbc"),
+    BankBackend = list_to_atom(atom_to_list(Module) ++ "_bank"),
     
     Hosts = ejabberd_config:get_global_option(hosts),
     
@@ -87,6 +91,7 @@ backends(Module) ->
                                      %% _1_ add cases for more backends
                                      MnesiaBackend -> mnesia;
                                      OdbcBackend -> {odbc, Host};
+                                     BankBackend -> {bank, Host};
                                      _ -> Acc
                                  end
                          end,
@@ -94,7 +99,7 @@ backends(Module) ->
         end,
     sets:to_list(lists:foldl(F, sets:new(), Hosts)).
     
--spec dispatch(mnesia | {odbc, ejabberd_host()}, atom()) -> term().
+-spec dispatch(mnesia | {odbc, ejabberd_host()} | {bank, ejabberd_host()}, atom()) -> term().
 dispatch(Backends, Function) -> 
     lists:foldl(fun(Backend, Res) ->
                BackendName = case Backend of
@@ -107,6 +112,8 @@ dispatch(Backends, Function) ->
                    mnesia ->
                        Res + apply(?MODULE, BackendFunction, []);
                    {odbc, Host} ->
+                       Res + apply(?MODULE, BackendFunction, [Host]);
+                   {bank, Host} ->
                        Res + apply(?MODULE, BackendFunction, [Host]);
                    _ ->
                        {error, ?ERR_INTERNAL_SERVER_ERROR}
@@ -141,6 +148,10 @@ odbc_privacy_list_length(Host) ->
     {selected, [_], [{Count}]} = odbc_queries:count_privacy_lists(Host),
     list_to_integer(binary_to_list(Count)). 
 
+bank_privacy_list_length(Host) ->
+    {rows, [[{<<"lists">>, Count}]]} = ejabberd_bank:count_privacy_lists(Host),
+    Count.
+
 mnesia_roster_size() ->
     F = fun() ->
         length(
@@ -159,11 +170,18 @@ mnesia_roster_size() ->
             {error, ?ERR_INTERNAL_SERVER_ERROR}
     end.
 
-odbc_roster_size(Host) ->
+odbc_roster_size(Host)  ->
     {selected, [_], [{Average}]} = odbc_queries:get_average_roster_size(Host),
     case Average of
         null -> 0;
         Average -> erlang:round(list_to_float(binary_to_list(Average)))
+    end.
+
+bank_roster_size(Host)  ->
+    {rows, [[{<<"avg">>, Average}]]} = ejabberd_bank:average_roster_size(Host),
+    case Average of
+        null -> 0;
+        Average -> erlang:round(Average)
     end.
 
 mnesia_roster_groups() ->
@@ -202,6 +220,13 @@ odbc_roster_groups(Host) ->
     case Average of
         null -> 0;
         Average -> erlang:round(list_to_float(binary_to_list(Average)))
+    end.
+
+bank_roster_groups(Host) ->
+    {rows, [[{<<"avg">>, Average}]]} = ejabberd_bank:average_rostergroup_size(Host),
+    case Average of
+        null -> 0;
+        Average -> erlang:round(Average)
     end.
 
 registered_count_disp(internal, _Host) ->

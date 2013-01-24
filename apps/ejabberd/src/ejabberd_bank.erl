@@ -8,7 +8,8 @@
 -include("ejabberd.hrl").
 
 %% Queries
--export([add_user/3,
+-export([%% auth
+         add_user/3,
          del_user/2,
          del_user_return_password/3,
          list_users/1,
@@ -17,9 +18,11 @@
          users_number/2,
          get_password/2,
          set_password/3,
+         %% mod_last
          get_last/2,
          set_last/4,
          del_last/2,
+         %% mod_privacy
          get_default_privacy_list/2,
          set_default_privacy_list/3,
          del_default_privacy_list/2,
@@ -30,11 +33,30 @@
          del_privacy_list/3,
          del_privacy_lists/2,
          set_privacy_list/4,
+         %% mod_private
          set_private_data/3,
          get_private_data/3,
          del_private_data/2,
+         %% ejabberd_snmp_backend
+         count_privacy_lists/1,
+         average_roster_size/1,
+         average_rostergroup_size/1,
+         %% mod_roster
+         get_roster_version/2,
+         set_roster_version_fun/2,
+         set_roster_version/3,
+         del_roster_fun/2,
+         del_roster_fun/1,
+         update_roster_fun/4,
+         roster_subscribe_fun/3,
+         get_rostergroups/2,
+         get_roster/2,
+         get_subscription/3,
+         get_rostergroup/3,
+         %% helpers
          to_bool/1,
          transaction/1,
+         transaction/2,
          update_fun/6]).
 
 %% Bank pool starter
@@ -44,6 +66,9 @@
 %%% Queries
 %%%===================================================================
 
+%%%===================================================================
+%%% auth
+%%%===================================================================
 add_user(Server, Username, Password) ->
     bank:execute(Server, add_user, [Username, Password]).
 
@@ -90,6 +115,9 @@ set_password(Server, Username, Password) ->
                    add_user, [Username, Password]),
     bank:batch(Server, transaction(T)).
 
+%%%===================================================================
+%%% mod_last
+%%%===================================================================
 get_last(Server, Username) ->
     bank:execute(Server, get_last, [Username]).
 
@@ -102,6 +130,9 @@ set_last(Server, Username, Seconds, State) ->
 del_last(Server, Username) ->
     bank:execute(Server, del_last, [Username]).
 
+%%%===================================================================
+%%% mod_privacy
+%%%===================================================================
 get_default_privacy_list(Server, Username) ->
     bank:execute(Server, get_default_privacy_list, [Username]).
 
@@ -186,6 +217,9 @@ set_privacy_list(Server, Username, Name, Items) ->
     end,
     bank:batch(Server, transaction(T)).
 
+%%%===================================================================
+%%% mod_private
+%%%===================================================================
 set_private_data(Server, Username, Elements) ->
     T = fun(Module, State) ->
             NewState = lists:foldl(fun(Element, AccState) ->
@@ -210,6 +244,90 @@ get_private_data(Server, Username, XMLNS) ->
 
 del_private_data(Server, Username) ->
     bank:execute(Server, del_private_data, [Username]).
+
+%%%===================================================================
+%%% ejabberd_snmp_backend
+%%%===================================================================
+count_privacy_lists(Server) ->
+    bank:sql_query(Server, <<"select count(*) as lists from privacy_list">>).
+
+average_roster_size(Server) ->
+    bank:sql_query(Server, <<"select avg(items) as avg from (select count(*) as "
+                             "items from rosterusers group by username) as items">>).
+
+average_rostergroup_size(Server) ->
+    bank:sql_query(Server, <<"select avg(roster) as avg from (select count(*) as "
+                             "roster from rostergroups group by username) as roster">>).
+
+%%%===================================================================
+%%% mod_roster
+%%%===================================================================
+get_roster_version(Server, Username) ->
+    bank:execute(Server, get_roster_version, [Server, Username]).
+
+set_roster_version_fun(Username, Version) ->
+    update_fun(get_roster_version,
+               [Username],
+               update_roster_version,
+               [Version, Username],
+               add_roster_version,
+               [Username, Version]).
+
+set_roster_version(Server, Username, Version) ->
+    T = set_roster_version_fun(Username, Version),
+    bank:batch(Server, transaction(T)).
+
+del_roster_fun(Username, SJID) ->
+    fun(Module, State) ->
+            {ok, _, _, State2} = Module:execute(del_roster, [Username, SJID], State),
+            {ok, _, _, State3} = Module:execute(del_rostergroup, [Username, SJID], State2),
+            {ok, ok, State3}
+    end.
+
+del_roster_fun(Username) ->
+    fun(Module, State) ->
+            {ok, _, _, State2} = Module:execute(del_roster_username, [Username], State),
+            {ok, _, _, State3} = Module:execute(del_rostergroup_username, [Username], State2),
+            {ok, ok, State3}
+    end.
+
+
+update_roster_fun(Username, SJID, [Username, SJID | ItemRest] = ItemVals, ItemGroups) ->
+    fun(Module, State) ->
+            Update = update_fun(get_roster_by_jid,
+                                [Username, SJID],
+                                update_roster,
+                                ItemRest ++ [Username, SJID],
+                                add_roster,
+                                ItemVals),
+            {ok, ok, State2} = Update(Module, State),
+            {ok, _, _, State3} = Module:execute(del_rostergroup, [Username, SJID], State2),
+            NewState = lists:foldl(fun(ItemGroup, AccState) ->
+                            {ok, _, _, CurrState} = Module:execute(add_rostergroup, ItemGroup, AccState),
+                            CurrState
+                    end, State3, ItemGroups),
+            {ok, ok, NewState}
+    end.
+
+roster_subscribe_fun(Username, SJID, [Username, SJID | ItemRest] = ItemVals) ->
+    update_fun(get_roster_by_jid,
+               [Username, SJID],
+               update_roster,
+               ItemRest ++ [Username, SJID],
+               add_roster,
+               ItemVals).
+
+get_rostergroups(Server, Username) ->
+    bank:execute(Server, get_rostergroups, [Username]).
+
+get_roster(Server, Username) ->
+    bank:execute(Server, get_roster, [Username]).
+
+get_subscription(Server, Username, SJID) ->
+    bank:execute(Server, get_subscription, [Username, SJID]).
+
+get_rostergroup(Server, Username, SJID) ->
+    bank:execute(Server, get_rostergroup, [Username, SJID]).
 
 %%%===================================================================
 %%% Internal functions
@@ -314,7 +432,42 @@ prepared_statements() ->
      {add_private_data,
       <<"insert into private_storage(username, namespace, data) values (?, ?, ?)">>},
      {del_private_data,
-      <<"delete from private_storage where username = ?">>}].
+      <<"delete from private_storage where username = ?">>},
+     {get_roster_version,
+      <<"select version from roster_version where username = ?">>},
+     {update_roster_version,
+      <<"update roster_version set version = ? where username = ?">>},
+     {add_roster_version,
+      <<"insert into roster_version(username, version) values (?, ?)">>},
+     {get_roster_by_jid,
+      <<"select username, jid, nick, subscription, ask, askmessage, server, subscribe, "
+        "type from rosterusers where username = ? and jid = ?">>},
+     {get_roster,
+      <<"select username, jid, nick, subscription, ask, askmessage, server, subscribe, "
+        "type from rosterusers where username = ?">>},
+     {update_roster,
+      <<"update rosterusers set nick = ?, subscription = ?, "
+        "ask = ?, askmessage = ?, server = ?, subscribe = ?, type = ? "
+        "where username = ? and jid = ?">>},
+     {add_roster,
+      <<"insert into rosterusers(username, jid, nick, subscription, ask, "
+        "askmessage, server, subscribe, type) values (?, ?, ?, ?, ?, ?, ?, ?, ?)">>},
+     {del_roster,
+      <<"delete from rosterusers where username = ? and jid = ?">>},
+     {del_rostergroup,
+      <<"delete from rostergroups where username = ? and jid = ?">>},
+     {del_roster_username,
+      <<"delete from rosterusers where username = ?">>},
+     {del_rostergroup_username,
+      <<"delete from rostergroups where username = ?">>},
+     {add_rostergroup,
+      <<"insert into rostergroups(username, jid, grp) values (?, ?, ?)">>},
+     {get_rostergroups,
+      <<"select jid, grp from rostergroups where username = ?">>},
+     {get_subscription,
+      <<"select subscription from rosterusers where username = ? and jid = ? ">>},
+     {get_rostergroup,
+      <<"select grp from rostergroups where username = ? and jid = ?">>}].
 
 %%%===================================================================
 %%% Bank pool starter
@@ -355,6 +508,14 @@ init(Host) ->
 %%%===================================================================
 %%% Helpers
 %%%===================================================================
+
+transaction(Server, Fun) ->
+    case bank:batch(Server, transaction(Fun)) of
+        {ok, Result} ->
+            Result;
+        _ ->
+            aborted
+    end.
 
 to_bool(1) -> true;
 to_bool(0) -> false.
