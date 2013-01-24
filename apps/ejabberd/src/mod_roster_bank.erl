@@ -211,16 +211,16 @@ get_user_roster(Acc, {LUser, LServer}) ->
 
 get_roster(LUser, LServer) ->
     case ejabberd_bank:get_roster(LServer, LUser) of
-        {rows, Items} ->
+        {ok, Items} ->
             JIDGroups = case ejabberd_bank:get_rostergroups(LServer, LUser) of
-                {rows, Rows} ->
+                {ok, Rows} ->
                     Rows;
                 _ ->
                     []
             end,
             RItems = lists:flatmap(
                        fun(I) ->
-                               case proplist_to_record(LServer, I) of
+                               case list_to_record(LServer, I) of
                                    %% Bad JID in database:
                                    error ->
                                        [];
@@ -438,14 +438,14 @@ get_subscription_lists(_, User, Server) ->
     LUser = jlib:nodeprep(User),
     LServer = jlib:nameprep(Server),
     case ejabberd_bank:get_roster(LServer, LUser) of
-        {rows, Items} ->
+        {ok, Items} ->
             fill_subscription_lists(LServer, Items, [], [], []);
         _ ->
             {[], [], []}
     end.
 
 fill_subscription_lists(LServer, [IProp | Is], F, T, P) ->
-      I = proplist_to_record(LServer, IProp),
+      I = list_to_record(LServer, IProp),
       J = element(3, I#roster.usj),
       NewP = case I#roster.ask of
                    Ask when Ask == in;
@@ -501,7 +501,7 @@ process_subscription(Direction, User, Server, JID1, Type, Reason) ->
                     R = list_to_record(LServer, I),
                     {result_set, _, State4} = Module:execute(get_rostergroups, [LUser], State3),
                     {rows, JGrps, State5} =  Module:fetch_all(State4),
-                    Groups = [JGrp || [{<<"jgrp">>, JGrp}] <- JGrps],
+                    Groups = [JGrp || [JGrp] <- JGrps],
                     {R#roster{groups = Groups}, State5};
                 {rows, [], State3} ->
                     {#roster{usj = {LUser, LServer, LJID},
@@ -814,7 +814,7 @@ get_in_pending_subscriptions(Ls, User, Server) ->
     LUser = JID#jid.luser,
     LServer = JID#jid.lserver,
     case ejabberd_bank:get_roster(LServer, LUser) of
-        {rows, Items} ->
+        {ok, Items} ->
     	    Ls ++ lists:map(
                     fun(R) ->
                             Message = R#roster.askmessage,
@@ -827,7 +827,7 @@ get_in_pending_subscriptions(Ls, User, Server) ->
                     end,
                     lists:flatmap(
                       fun(I) ->
-                              case proplist_to_record(LServer, I) of
+                              case list_to_record(LServer, I) of
                                   %% Bad JID in database:
                                   error ->
                                       [];

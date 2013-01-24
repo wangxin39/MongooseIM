@@ -318,10 +318,20 @@ roster_subscribe_fun(Username, SJID, [Username, SJID | ItemRest] = ItemVals) ->
                ItemVals).
 
 get_rostergroups(Server, Username) ->
-    bank:execute(Server, get_rostergroups, [Username]).
+    B = fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(get_rostergroups, [Username], State),
+            {rows, Rows, State3} = Module:fetch_all(State2),
+            {ok, Rows, State3}
+    end,
+    bank:batch(Server, B).
 
 get_roster(Server, Username) ->
-    bank:execute(Server, get_roster, [Username]).
+    B = fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(get_roster, [Username], State),
+            {rows, Rows, State3} = Module:fetch_all(State2),
+            {ok, Rows, State3}
+    end,
+    bank:batch(Server, B).
 
 get_subscription(Server, Username, SJID) ->
     bank:execute(Server, get_subscription, [Username, SJID]).
