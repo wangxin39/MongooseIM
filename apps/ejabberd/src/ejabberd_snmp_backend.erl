@@ -149,7 +149,7 @@ odbc_privacy_list_length(Host) ->
     list_to_integer(binary_to_list(Count)). 
 
 bank_privacy_list_length(Host) ->
-    {rows, [[{<<"lists">>, Count}]]} = ejabberd_bank:count_privacy_lists(Host),
+    {rows, [[{<<"lists">>, Count}]]} = bank_count_privacy_lists(Host),
     Count.
 
 mnesia_roster_size() ->
@@ -178,7 +178,7 @@ odbc_roster_size(Host)  ->
     end.
 
 bank_roster_size(Host)  ->
-    {rows, [[{<<"avg">>, Average}]]} = ejabberd_bank:average_roster_size(Host),
+    {rows, [[{<<"avg">>, Average}]]} = bank_average_roster_size(Host),
     case Average of
         null -> 0;
         Average -> erlang:round(Average)
@@ -223,7 +223,7 @@ odbc_roster_groups(Host) ->
     end.
 
 bank_roster_groups(Host) ->
-    {rows, [[{<<"avg">>, Average}]]} = ejabberd_bank:average_rostergroup_size(Host),
+    {rows, [[{<<"avg">>, Average}]]} = bank_average_rostergroup_size(Host),
     case Average of
         null -> 0;
         Average -> erlang:round(Average)
@@ -235,3 +235,18 @@ registered_count_disp(odbc, Host) ->
     ejabberd_auth_odbc:get_vh_registered_users_number(Host);
 registered_count_disp(_, _) ->
     0.         %% no such instance
+
+%%-------------------
+%% Bank queries
+%%-------------------
+
+bank_count_privacy_lists(Server) ->
+    bank:sql_query(Server, <<"select count(*) as lists from privacy_list">>).
+
+bank_average_roster_size(Server) ->
+    bank:sql_query(Server, <<"select avg(items) as avg from (select count(*) as "
+                             "items from rosterusers group by username) as items">>).
+
+bank_average_rostergroup_size(Server) ->
+    bank:sql_query(Server, <<"select avg(roster) as avg from (select count(*) as "
+                             "roster from rostergroups group by username) as roster">>).

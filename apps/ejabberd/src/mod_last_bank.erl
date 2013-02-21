@@ -5,8 +5,10 @@
 %%%===================================================================
 -module(mod_last_bank).
 
--behaviour(gen_mod).
+-behaviour(ejabberd_bank).
+-export([prepared_statements/0]).
 
+-behaviour(gen_mod).
 -export([start/2,
          stop/1,
          process_local_iq/3,
@@ -112,7 +114,7 @@ process_sm_iq(From, To, #iq{type = Type, sub_el = SubEl} = IQ) ->
 %% @spec (LUser::string(), LServer::string()) ->
 %%      {ok, TimeStamp::integer(), Status::string()} | not_found | {error, Reason}
 get_last(LUser, LServer) ->
-    case ejabberd_bank:get_last(LServer, LUser) of
+    case get_last_q(LServer, LUser) of
         {rows, []} ->
             not_found;
         {rows, [[{<<"seconds">>, TimeStamp}, {<<"state">>, Status}]]} ->
@@ -153,7 +155,7 @@ on_presence_update(User, Server, _Resource, Status) ->
 
 store_last_info(User, Server, TimeStamp, Status) ->
     LServer = jlib:nameprep(Server),
-    {ok, {ok, _Res}} = ejabberd_bank:set_last(LServer, User, TimeStamp, Status).
+    {ok, {ok, _Res}} = set_last_q(LServer, User, TimeStamp, Status).
 
 %% @spec (LUser::string(), LServer::string()) ->
 %%      {ok, TimeStamp::integer(), Status::string()} | not_found
@@ -167,4 +169,34 @@ get_last_info(LUser, LServer) ->
 
 remove_user(User, Server) ->
     LServer = jlib:nameprep(Server),
-    {ok, _, _} = ejabberd_bank:del_last(LServer, User).
+    {ok, _, _} = del_last_q(LServer, User).
+
+%%%===================================================================
+%%% Queries
+%%%===================================================================
+
+get_last_q(Server, Username) ->
+        bank:execute(Server, get_last, [Username]).
+
+set_last_q(Server, Username, Seconds, State) ->
+        T = ejabberd_bank:update_fun(get_last, [Username],
+                                          update_last, [Seconds, State, Username],
+                                          add_last, [Username, Seconds, State]),
+        bank:batch(Server, ejabberd_bank:transaction(T)).
+
+del_last_q(Server, Username) ->
+        bank:execute(Server, del_last, [Username]).
+
+%%%===================================================================
+%%% Behaviour
+%%%===================================================================
+
+prepared_statements() ->
+    [{get_last,
+      <<"select seconds, state from last where username = ?">>},
+     {update_last,
+      <<"update last set seconds = ?, state = ? where username = ?">>},
+     {add_last,
+      <<"insert into last(username, seconds, state) values (?, ?, ?)">>},
+     {del_last,
+      <<"delete from last where username = ?">>}].

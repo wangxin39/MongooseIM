@@ -5,6 +5,9 @@
 %%%===================================================================
 -module(mod_privacy_bank).
 
+-behaviour(ejabberd_bank).
+-export([prepared_statements/0]).
+
 -behaviour(gen_mod).
 
 -export([start/2, stop/1,
@@ -76,13 +79,13 @@ process_iq_get(_, From, _To, #iq{sub_el = SubEl},
     end.
 
 process_lists_get(LUser, LServer, Active) ->
-    Default = case ejabberd_bank:get_default_privacy_list(LServer, LUser) of
+    Default = case get_default_privacy_list_q(LServer, LUser) of
         {rows, [[{<<"name">>, DefName}]]} ->
             DefName;
         _ ->
             none
     end,
-    case ejabberd_bank:get_privacy_list_names(LServer, LUser) of
+    case get_privacy_list_names_q(LServer, LUser) of
         {rows, []} ->
 	    {result, [{xmlelement, <<"query">>, [{<<"xmlns">>, ?NS_PRIVACY}], []}]};
         {rows, Rows} ->
@@ -110,11 +113,11 @@ process_lists_get(LUser, LServer, Active) ->
     end.
 
 process_list_get(LUser, LServer, {value, Name}) ->
-    case ejabberd_bank:get_privacy_list_id(LServer, LUser, Name) of
+    case get_privacy_list_id_q(LServer, LUser, Name) of
         {rows, []} ->
 	    {error, ?ERR_ITEM_NOT_FOUND};
         {rows, [[{<<"id">>, ID}]]} ->
-            case ejabberd_bank:get_privacy_list_data_by_id(LServer, ID) of
+            case get_privacy_list_data_by_id_q(LServer, ID) of
                 {rows, Rows} ->
                     Items = lists:map(fun proplist_to_item/1, Rows),
 		    LItems = lists:map(fun item_to_xml/1, Items),
@@ -238,7 +241,7 @@ process_iq_set(_, From, _To, #iq{sub_el = SubEl}) ->
     end.
 
 process_default_set(LUser, LServer, {value, Name}) ->
-    case ejabberd_bank:set_default_privacy_list(LServer, LUser, Name) of
+    case set_default_privacy_list_q(LServer, LUser, Name) of
         {ok, {ok, ok}} ->
             {result, []};
         {ok, {ok, {error, not_found}}} ->
@@ -248,7 +251,7 @@ process_default_set(LUser, LServer, {value, Name}) ->
     end;
 
 process_default_set(LUser, LServer, false) ->
-    case ejabberd_bank:del_default_privacy_list(LServer, LUser) of
+    case del_default_privacy_list_q(LServer, LUser) of
         {ok, _, _} ->
             {result, []};
         _ ->
@@ -256,11 +259,11 @@ process_default_set(LUser, LServer, false) ->
     end.
 
 process_active_set(LUser, LServer, {value, Name}) ->
-    case ejabberd_bank:get_privacy_list_id(LServer, LUser, Name) of
+    case get_privacy_list_id_q(LServer, LUser, Name) of
         {rows, []} ->
             {error, ?ERR_ITEM_NOT_FOUND};
         {rows, [[{<<"id">>, ID}]]} ->
-            case ejabberd_bank:get_privacy_list_data_by_id(LServer, ID) of
+            case get_privacy_list_data_by_id_q(LServer, ID) of
                 {rows, Rows} ->
                     Items = lists:map(fun proplist_to_item/1, Rows),
 		    NeedDb = is_list_needdb(Items),
@@ -281,7 +284,7 @@ process_list_set(LUser, LServer, {value, Name}, Els) ->
 	false ->
 	    {error, ?ERR_BAD_REQUEST};
 	remove ->
-            case ejabberd_bank:del_privacy_list(LServer, LUser, Name) of
+            case del_privacy_list_q(LServer, LUser, Name) of
                 {ok, {ok, {error, conflict}}} ->
                     {error, ?ERR_CONFLICT};
                 {ok, {ok, {result, _} = Res}} ->
@@ -298,7 +301,7 @@ process_list_set(LUser, LServer, {value, Name}, Els) ->
             end;
 	List ->
 	    RItems = lists:map(fun item_to_list/1, List),
-            case ejabberd_bank:set_privacy_list(LServer, LUser, Name, RItems) of
+            case set_privacy_list_q(LServer, LUser, Name, RItems) of
                 {ok, {ok, {result, _} = Res}} ->
 		    NeedDb = is_list_needdb(List),
 		    ejabberd_router:route(
@@ -435,11 +438,11 @@ is_list_needdb(Items) ->
 get_user_list(_, User, Server) ->
     LUser = jlib:nodeprep(User),
     LServer = jlib:nameprep(Server),
-    case ejabberd_bank:get_default_privacy_list(LServer, LUser) of
+    case get_default_privacy_list_q(LServer, LUser) of
         {rows, []} ->
             #userlist{};
         {rows, [[{<<"name">>, Default}]]} ->
-            case ejabberd_bank:get_privacy_list_data(LServer, LUser, Default) of
+            case get_privacy_list_data_q(LServer, LUser, Default) of
                 {rows, Rows} ->
                     Items = lists:map(fun proplist_to_item/1, Rows),
 		    NeedDb = is_list_needdb(Items),
@@ -572,7 +575,7 @@ is_type_match(Type, Value, JID, Subscription, Groups) ->
 remove_user(User, Server) ->
     LUser = jlib:nodeprep(User),
     LServer = jlib:nameprep(Server),
-    {ok, {ok, ok}} = ejabberd_bank:del_privacy_lists(LServer, LUser). 
+    {ok, {ok, ok}} = del_privacy_lists_q(LServer, LUser). 
 
 updated_list(_,
 	     #userlist{name = OldName} = Old,
@@ -675,3 +678,131 @@ item_to_list(#listitem{type = Type,
 	end,
     [BType, BValue, BAction, Order, MatchAll, MatchIQ,
      MatchMessage, MatchPresenceIn, MatchPresenceOut].
+
+%%%===================================================================
+%%% Queries
+%%%===================================================================
+
+get_default_privacy_list_q(Server, Username) ->
+    bank:execute(Server, get_default_privacy_list, [Username]).
+
+set_default_privacy_list_q(Server, Username, Name) ->
+    T = fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(get_privacy_list_by_name,
+                                                     [Username, Name], State),
+            case Module:fetch_all(State2) of
+                {rows, [], State3} ->
+                    {ok, {error, not_found}, State3};
+                {rows, _, State3} ->
+                    F = ejabberd_bank:update_fun(get_default_privacy_list, [Username],
+                                   update_default_privacy_list, [Name, Username],
+                                   add_default_privacy_list, [Username, Name]),
+                    F(Module, State3)
+            end
+    end,
+    bank:batch(Server, ejabberd_bank:transaction(T)).
+
+del_default_privacy_list_q(Server, Username) ->
+    bank:execute(Server, del_default_privacy_list, [Username]).
+
+get_privacy_list_id_q(Server, Username, SName) ->
+    bank:execute(Server, get_privacy_list_id, [Username, SName]).
+
+get_privacy_list_data_q(Server, Username, SName) ->
+    bank:execute(Server, get_privacy_list_data, [Username, SName]).
+
+get_privacy_list_data_by_id_q(Server, ID) ->
+    bank:execute(Server, get_privacy_list_data_by_id, [ID]).
+
+get_privacy_list_names_q(Server, Username) ->
+    bank:execute(Server, get_privacy_list_names, [Username]).
+
+del_privacy_list_q(Server, Username, Name) ->
+    T = fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(get_default_privacy_list, [Username], State),
+            case Module:fetch_all(State2) of
+                {rows, [], State3} ->
+                    {ok, _, _, State4} = Module:execute(del_privacy_list, [Username, Name], State3),
+                    {ok, {result, []}, State4};
+                {rows, [[{<<"name">>, Default}]], State3} ->
+                    case Name == Default of
+                        true ->
+                            {error, conflict};
+                        _ ->
+                            {ok, _, _, State4} = Module:execute(del_privacy_list, [Username, Name], State3),
+                            {ok, {result, []}, State4}
+                    end
+            end
+    end,
+    bank:batch(Server, ejabberd_bank:transaction(T)).
+
+del_privacy_lists_q(Server, Username) ->
+    Value = <<Username/binary, "@", Server/binary>>,
+    T = fun(Module, State) ->
+            {ok, _, _, State2} = Module:execute(del_privacy_lists, [Username], State),
+            {ok, _, _, State3} = Module:execute(del_privacy_lists_data, [Value], State2),
+            {ok, _, _, State4} = Module:execute(del_default_privacy_list, [Username], State3),
+            {ok, ok, State4}
+    end,
+    bank:batch(Server, ejabberd_bank:transaction(T)).
+
+set_privacy_list_q(Server, Username, Name, Items) ->
+    T = fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(get_privacy_list_id, [Username, Name], State),
+            {ID, NewState} = case Module:fetch_all(State2) of
+                {rows, [], State3} ->
+                    {ok, _, _, State4} = Module:execute(add_privacy_list, [Username, Name], State3),
+                    {result_set, _, State5} = Module:execute(get_privacy_list_id, [Username, Name], State4),
+                    {rows, [[I]], State6} = Module:fetch_all(State5),
+                    {I, State6};
+                {rows, [[I]], State3} ->
+                    {I, State3}
+            end,
+            {ok, _, _, NewState1} = Module:execute(del_privacy_list_data, [ID], NewState),
+            NewState2 = lists:foldl(fun(Item, AccState) ->
+                            {ok, _, _, CurrState} = Module:execute(add_privacy_list_data, [ID | Item], AccState),
+                            CurrState
+                    end, NewState1, Items),
+            {ok, {result, []}, NewState2}
+    end,
+    bank:batch(Server, ejabberd_bank:transaction(T)).
+
+%%%===================================================================
+%%% Behaviour
+%%%===================================================================
+
+prepared_statements() ->
+    [{get_default_privacy_list,
+     <<"select name from privacy_default_list where username = ?">>},
+    {update_default_privacy_list,
+     <<"update privacy_default_list set name = ? where username = ?">>},
+    {add_default_privacy_list,
+     <<"insert into privacy_default_list(username, name) values (?, ?)">>},
+    {del_default_privacy_list,
+     <<"delete from privacy_default_list where username = ?">>},
+    {get_privacy_list_by_name,
+     <<"select name from privacy_list where username = ? and name = ?">>},
+    {get_privacy_list_id,
+     <<"select id from privacy_list where username = ? and name = ?">>},
+    {get_privacy_list_data,
+     <<"select * from privacy_list_data where "
+       "id = (select id from privacy_list where username = ? and name = ?) "
+       "order by ord">>},
+    {get_privacy_list_data_by_id,
+     <<"select * from privacy_list_data where id = ? order by ord">>},
+    {get_privacy_list_names,
+     <<"select name from privacy_list where username = ?">>},
+    {del_privacy_list,
+     <<"delete from privacy_list where username = ? and name = ?">>},
+    {del_privacy_lists,
+     <<"delete from privacy_list where username = ?">>},
+    {del_privacy_list_data,
+     <<"delete from privacy_list_data where id = ?">>},
+    {del_privacy_lists_data,
+     <<"delete from privacy_list_data where value = ?">>},
+    {add_privacy_list,
+     <<"insert into privacy_list(username, name) values (?, ?)">>},
+    {add_privacy_list_data,
+     <<"insert into privacy_list_data(id, t, value, action, ord, match_all, "
+       "match_iq, match_message, match_presence_in, match_presence_out) values "
+       "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)">>}].

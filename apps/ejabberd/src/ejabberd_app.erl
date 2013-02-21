@@ -56,7 +56,6 @@ start(normal, _Args) ->
     connect_nodes(),
     {ok, _} = Sup = ejabberd_sup:start_link(),
     ejabberd_rdbms:start(),
-    ejabberd_bank:start(),
     ejabberd_auth:start(),
     cyrsasl:start(),
     %% Profiling
@@ -66,6 +65,7 @@ start(normal, _Args) ->
     start_modules(),
     ejabberd_listener:start_listeners(),
     ejabberd_admin:start(),
+    ejabberd_bank:start(),
     ?INFO_MSG("ejabberd ~s is started in the node ~p", [?VERSION, node()]),
     Sup;
 start(_, _) ->

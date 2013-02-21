@@ -25,6 +25,9 @@
 	 plain_password_required/0
 	]).
 
+-behaviour(ejabberd_bank).
+-export([prepared_statements/0]).
+
 -include("ejabberd.hrl").
 
 %%%----------------------------------------------------------------------
@@ -43,7 +46,7 @@ check_password(User, Server, Password) ->
 	    false;
 	LUser ->
             LServer = jlib:nameprep(Server),
-            case ejabberd_bank:get_password(LServer, LUser) of
+            case get_password_q(LServer, LUser) of
                 {rows, [[{<<"password">>, Password}]]} ->
                     Password =/= <<"">>;
                 _ ->
@@ -58,7 +61,7 @@ check_password(User, Server, Password, Digest, DigestGen) ->
 	    false;
 	LUser ->
 	    LServer = jlib:nameprep(Server),
-            case ejabberd_bank:get_password(LServer, LUser) of
+            case get_password_q(LServer, LUser) of
                 {rows, [[{<<"password">>, Passwd}]]} ->
                     ((Digest =/= <<"">>) and (Digest =:= DigestGen(Passwd))) or
                     ((Password =/= <<"">>) and (Passwd =:= Password));
@@ -74,7 +77,7 @@ set_password(User, Server, Password) ->
 	    {error, invalid_jid};
 	_LUser ->
 	    LServer = jlib:nameprep(Server),
-            case ejabberd_bank:set_password(LServer, User, Password) of
+            case set_password_q(LServer, User, Password) of
                 {ok, {ok, _Res}} -> ok;
                 {ok, Other} -> {error, Other}
 	    end
@@ -88,7 +91,7 @@ try_register(User, Server, Password) ->
 	    {error, invalid_jid};
 	LUser ->
 	    LServer = jlib:nameprep(Server),
-            case ejabberd_bank:add_user(LServer, LUser, Password) of
+            case add_user_q(LServer, LUser, Password) of
                 {ok, 1, 0} -> {atomic, ok};
                 _ -> {atomic, exists}
             end
@@ -103,7 +106,7 @@ dirty_get_registered_users() ->
 
 get_vh_registered_users(Server) ->
     LServer = jlib:nameprep(Server),
-    case ejabberd_bank:list_users(LServer) of
+    case list_users_q(LServer) of
         {rows, Result} ->
             [{Username, LServer} || [{<<"username">>, Username}] <- Result];
         _ ->
@@ -112,7 +115,7 @@ get_vh_registered_users(Server) ->
 
 get_vh_registered_users(Server, Opts) ->
     LServer = jlib:nameprep(Server),
-    case ejabberd_bank:list_users(LServer, Opts) of
+    case list_users_q(LServer, Opts) of
         {rows, Result} ->
             [{Username, LServer} || [{<<"username">>, Username}] <- Result];
         _ ->
@@ -121,7 +124,7 @@ get_vh_registered_users(Server, Opts) ->
 
 get_vh_registered_users_number(Server) ->
     LServer = jlib:nameprep(Server),
-    case ejabberd_bank:users_number(LServer) of
+    case users_number_q(LServer) of
         {rows, [[{<<"users_number">>, Number}]]} ->
             Number;
 	_ ->
@@ -130,7 +133,7 @@ get_vh_registered_users_number(Server) ->
 
 get_vh_registered_users_number(Server, Opts) ->
     LServer = jlib:nameprep(Server),
-    case ejabberd_bank:users_number(LServer, Opts) of
+    case users_number_q(LServer, Opts) of
         {rows, [[{<<"users_number">>, Number}]]} ->
             Number;
 	_ ->
@@ -143,7 +146,7 @@ get_password(User, Server) ->
 	    false;
 	_LUser ->
 	    LServer = jlib:nameprep(Server),
-            case ejabberd_bank:get_password(LServer, User) of
+            case get_password_q(LServer, User) of
                 {rows, [[{<<"password">>, Password}]]} ->
                     Password;
                 _ ->
@@ -157,7 +160,7 @@ get_password_s(User, Server) ->
             <<"">>;
 	_LUser ->
 	    LServer = jlib:nameprep(Server),
-            case ejabberd_bank:get_password(LServer, User) of
+            case get_password_q(LServer, User) of
                 {rows, [[{<<"password">>, Password}]]} ->
                     Password;
                 _ ->
@@ -172,7 +175,7 @@ is_user_exists(User, Server) ->
 	    false;
 	_LUser ->
 	    LServer = jlib:nameprep(Server),
-            case ejabberd_bank:get_password(LServer, User) of
+            case get_password_q(LServer, User) of
                 {rows, [[{<<"password">>, _Password}]]} ->
                     true;
                 {rows, []} ->
@@ -189,7 +192,7 @@ remove_user(User, Server) ->
 	    error;
 	_LUser ->
 	    LServer = jlib:nameprep(Server),
-            {ok, _, _} = ejabberd_bank:del_user(LServer, User),
+            {ok, _, _} = del_user_q(LServer, User),
             ok
     end.
 
@@ -201,7 +204,7 @@ remove_user(User, Server, Password) ->
 	    error;
 	_LUser ->
 	    LServer = jlib:nameprep(Server),
-            case ejabberd_bank:del_user_return_password(LServer, User, Password) of
+            case del_user_return_password_q(LServer, User, Password) of
                 {ok, {ok, [[Password]]}} ->
                     ok;
                 {ok, {ok, []}} ->
@@ -210,3 +213,79 @@ remove_user(User, Server, Password) ->
                     not_allowed
             end
     end.
+
+%%%===================================================================
+%%% Queries
+%%%===================================================================
+add_user_q(Server, Username, Password) ->
+    bank:execute(Server, add_user, [Username, Password]).
+
+del_user_q(Server, Username) ->
+    bank:execute(Server, del_user, [Username]).
+
+del_user_return_password_q(Server, Username, Password) ->
+    T = fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(get_password, [Username], State),
+            {rows, Result, State3} = Module:fetch_all(State2),
+            {ok, _, _, State4} = Module:execute(del_user_password, [Username, Password], State3),
+            {ok, Result, State4}
+    end,
+    bank:batch(Server, ejabberd_bank:transaction(T)).
+
+list_users_q(Server) ->
+    bank:execute(Server, list_users, []).
+
+list_users_q(LServer, [{from, Start}, {to, End}]) ->
+    list_users_q(LServer, [{limit, End-Start+1}, {offset, Start-1}]);
+list_users_q(LServer, [{prefix, Prefix}, {from, Start}, {to, End}]) ->
+    list_users_q(LServer, [{prefix, Prefix}, {limit, End-Start+1}, {offset, Start-1}]);
+list_users_q(LServer, [{limit, Limit}, {offset, Offset}]) ->
+    bank:execute(LServer, list_users_limit, [Limit, Offset]);
+list_users_q(LServer, [{prefix, Prefix},
+                     {limit, Limit},
+                     {offset, Offset}]) ->
+    bank:execute(LServer, list_users_prefix, [<<Prefix/binary, "%">>, Limit, Offset]).
+
+users_number_q(LServer) ->
+    bank:execute(LServer, users_number, []).
+
+users_number_q(LServer, [{prefix, Prefix}]) ->
+    bank:execute(LServer, users_number_prefix, [<<Prefix/binary, "%">>]);
+users_number_q(LServer, []) ->
+    users_number_q(LServer).
+
+get_password_q(Server, Username) ->
+    bank:execute(Server, get_password, [Username]).
+
+set_password_q(Server, Username, Password) ->
+    T = ejabberd_bank:update_fun(get_password, [Username],
+                   update_password, [Password, Username],
+                   add_user, [Username, Password]),
+    bank:batch(Server, ejabberd_bank:transaction(T)).
+
+
+%%%===================================================================
+%%% Behaviour
+%%%===================================================================
+
+prepared_statements() ->
+    [{add_user,
+      <<"insert into users(username, password) values (?, ?)">>},
+     {del_user,
+      <<"delete from users where username = ?">>},
+     {del_user_password,
+      <<"delete from users where username = ? and password = ?">>},
+     {list_users,
+      <<"select username from users">>},
+     {list_users_limit,
+      <<"select username from users order by username limit ? offset ?">>},
+     {list_users_prefix,
+      <<"select username from users where username like ? order by username limit ? offset ?">>},
+     {users_number,
+      <<"select count(*) as users_number from users">>},
+     {users_number_prefix,
+      <<"select count(*) as users_number from users where username like ?">>},
+     {get_password,
+      <<"select password from users where username = ?">>},
+     {update_password,
+      <<"update users set password = ? where username = ?">>}].

@@ -4,8 +4,11 @@
 %%% @end
 %%%===================================================================
 -module(mod_private_bank).
--behaviour(gen_mod).
 
+-behaviour(ejabberd_bank).
+-export([prepared_statements/0]).
+
+-behaviour(gen_mod).
 -export([start/2,
          stop/1,
          process_sm_iq/3,
@@ -35,7 +38,7 @@ process_sm_iq(From, To, #iq{type = Type, sub_el = SubEl} = IQ) ->
                     {xmlelement, Name, Attrs, Els} = SubEl,
                     case Type of
                         set ->
-                            {ok, {ok, ok}} = ejabberd_bank:set_private_data(LServer, LUser, Els), 
+                            {ok, {ok, ok}} = set_private_data_q(LServer, LUser, Els), 
                             IQ#iq{type = result,
                                   sub_el = [{xmlelement, Name, Attrs, []}]};
                         get ->
@@ -67,7 +70,7 @@ get_data(LUser, LServer, [El | Els], Res) ->
     case El of
         {xmlelement, _Name, Attrs, _} ->
             XMLNS = xml:get_attr_s(<<"xmlns">>, Attrs),
-            case ejabberd_bank:get_private_data(LServer, LUser, XMLNS) of
+            case get_private_data_q(LServer, LUser, XMLNS) of
                 {rows, [[{<<"data">>, SData}]]} ->
                     case xml_stream:parse_element(SData) of
                         {xmlelement, _, _, _} = Data ->
@@ -81,4 +84,48 @@ get_data(LUser, LServer, [El | Els], Res) ->
     end.
 
 remove_user(User, Server) ->
-    {ok, _, _} = ejabberd_bank:del_private_data(Server, User).
+    {ok, _, _} = del_private_data_q(Server, User).
+
+%%%===================================================================
+%%% Queries
+%%%===================================================================
+
+set_private_data_q(Server, Username, Elements) ->
+    T = fun(Module, State) ->
+            NewState = lists:foldl(fun(Element, AccState) ->
+                            {xmlelement, _, Attrs, _} = Element,
+                            XMLNS = xml:get_attr_s(<<"xmlns">>, Attrs),
+                            SElement = xml:element_to_binary(Element),
+                            Update = ejabberd_bank:update_fun(get_private_data,
+                                                [Username, XMLNS],
+                                                update_private_data,
+                                                [SElement, Username, XMLNS],
+                                                add_private_data,
+                                                [Username, XMLNS, SElement]),
+                            {ok, ok, CurrState} = Update(Module, AccState),
+                            CurrState
+                    end, State, Elements),
+            {ok, ok, NewState}
+    end,
+    bank:batch(Server, ejabberd_bank:transaction(T)). 
+
+get_private_data_q(Server, Username, XMLNS) ->
+    bank:execute(Server, get_private_data, [Username, XMLNS]).
+
+del_private_data_q(Server, Username) ->
+    bank:execute(Server, del_private_data, [Username]).
+
+%%%===================================================================
+%%% Behaviour
+%%%===================================================================
+
+prepared_statements() ->
+    [{get_private_data,
+      <<"select data from private_storage where "
+        "username = ? and namespace = ?">>},
+     {update_private_data,
+      <<"update private_storage set data = ? where username = ? and namespace = ?">>},
+     {add_private_data,
+      <<"insert into private_storage(username, namespace, data) values (?, ?, ?)">>},
+     {del_private_data,
+      <<"delete from private_storage where username = ?">>}].

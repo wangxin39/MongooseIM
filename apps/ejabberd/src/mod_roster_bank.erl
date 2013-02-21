@@ -11,6 +11,9 @@
 %%% No additional data is stored in DB.
 
 -module(mod_roster_bank).
+-behaviour(ejabberd_bank).
+-export([prepared_statements/0]).
+
 -behaviour(gen_mod).
 
 -export([start/2, stop/1,
@@ -135,7 +138,7 @@ roster_version(LServer ,LUser) ->
 	US = {LUser, LServer},
 	case roster_version_on_db(LServer) of
 		true ->
-                        case ejabberd_bank:get_roster_version(LServer, LUser) of
+                        case get_roster_version_q(LServer, LUser) of
                             {rows, [[{<<"version">>, Version}]]} ->
                                 Version;
                             {rows, []} ->
@@ -164,7 +167,7 @@ process_iq_get(From, To, #iq{sub_el = SubEl} = IQ) ->
                 {{value, RequestedVersion}, true, true} ->
                     %% Retrieve version from DB. Only load entire roster
                     %% when neccesary.
-                    case ejabberd_bank:get_roster_version(LServer, LUser) of
+                    case get_roster_version_q(LServer, LUser) of
                         {rows, [[{<<"version">>, RequestedVersion}]]} ->
                             {false, false};
                         {rows, [[{<<"version">>, NewVersion}]]} ->
@@ -172,7 +175,7 @@ process_iq_get(From, To, #iq{sub_el = SubEl} = IQ) ->
                                        ejabberd_hooks:run_fold(roster_get, To#jid.lserver, [], [US])), NewVersion};
                         {rows, []} ->
                             RosterVersion = sha:sha(term_to_binary(now())),
-                            {ok, {ok, ok}} = ejabberd_bank:set_roster_version(LServer, LUser, RosterVersion),
+                            {ok, {ok, ok}} = set_roster_version_q(LServer, LUser, RosterVersion),
                             {lists:map(fun item_to_xml/1,
                                        ejabberd_hooks:run_fold(roster_get, To#jid.lserver, [], [US])), RosterVersion}
                     end;
@@ -210,9 +213,9 @@ get_user_roster(Acc, {LUser, LServer}) ->
                  end, Items) ++ Acc.
 
 get_roster(LUser, LServer) ->
-    case ejabberd_bank:get_roster(LServer, LUser) of
+    case get_roster_q(LServer, LUser) of
         {ok, Items} ->
-            JIDGroups = case ejabberd_bank:get_rostergroups(LServer, LUser) of
+            JIDGroups = case get_rostergroups_q(LServer, LUser) of
                 {ok, Rows} ->
                     Rows;
                 _ ->
@@ -318,13 +321,13 @@ process_item_set(From, To, {xmlelement, _Name, Attrs, Els}) ->
                     Item2 = process_item_els(Item1, Els),
                     State4 = case Item2#roster.subscription of
                         remove ->
-                            Remove = ejabberd_bank:del_roster_fun(LUser, SJID),
+                            Remove = del_roster_fun(LUser, SJID),
                             {ok, ok, NewState} = Remove(Module, State3),
                             NewState;
                         _ ->
                             ItemVals = record_to_binary(Item2),
                             ItemGroups = groups_to_binary(Item2),
-                            Update = ejabberd_bank:update_roster_fun(LUser, SJID, ItemVals, ItemGroups),
+                            Update = update_roster_fun(LUser, SJID, ItemVals, ItemGroups),
                             {ok, ok, NewState} = Update(Module, State3),
                             NewState
                     end,
@@ -334,7 +337,7 @@ process_item_set(From, To, {xmlelement, _Name, Attrs, Els}) ->
                                                     LServer, Item2, [LServer]),
                     State5 = case roster_version_on_db(LServer) of
                         true ->
-                            SetVersion = ejabberd_bank:set_roster_version_fun(LUser, sha:sha(term_to_binary(now()))),
+                            SetVersion = set_roster_version_fun(LUser, sha:sha(term_to_binary(now()))),
                             {ok, ok, NewState2} = SetVersion(Module, State4),
                             NewState2;
                         false -> State4
@@ -437,7 +440,7 @@ push_item_version(User, Server, Resource, From, Item, RosterVersion) ->
 get_subscription_lists(_, User, Server) ->
     LUser = jlib:nodeprep(User),
     LServer = jlib:nameprep(Server),
-    case ejabberd_bank:get_roster(LServer, LUser) of
+    case get_roster_q(LServer, LUser) of
         {ok, Items} ->
             fill_subscription_lists(LServer, Items, [], [], []);
         _ ->
@@ -458,7 +461,7 @@ fill_subscription_lists(LServer, [IProp | Is], F, T, P) ->
                                        end,
                          [{xmlelement, <<"presence">>,
                                                 [{<<"from">>, jlib:jid_to_binary(I#roster.jid)},
-                                                                       {<<"to">>, jlib:jid_to_binary(LServer)},
+                                                                       {<<"to">>, jlib:jid_to_binary(J)},
                                                                        {<<"type">>, <<"subscribe">>}],
                                                 [{xmlelement, <<"status">>, [],
                                                                          [{xmlcdata, Status}]}]} | P];
@@ -536,7 +539,7 @@ process_subscription(Direction, User, Server, JID1, Type, Reason) ->
                     {{none, AutoReply}, State6};
                 {none, none} when Item#roster.subscription == none,
                         Item#roster.ask == in ->
-                    Delete = ejabberd_bank:del_roster_fun(LUser, SJID),
+                    Delete = del_roster_fun(LUser, SJID),
                     {ok, ok, State7} = Delete(Module, State6),
                     {{none, AutoReply}, State7};
                 {Subscription, Pending} ->
@@ -544,11 +547,11 @@ process_subscription(Direction, User, Server, JID1, Type, Reason) ->
                                           ask = Pending,
                                           askmessage = AskMessage},
                     ItemVals = record_to_binary(NewItem),
-                    Subscribe = ejabberd_bank:roster_subscribe_fun(LUser, SJID, ItemVals),
+                    Subscribe = roster_subscribe_fun(LUser, SJID, ItemVals),
                     {ok, ok, State7} = Subscribe(Module, State6),
                     State9 = case roster_version_on_db(LServer) of
                         true ->
-                            Version = ejabberd_bank:set_roster_version_fun(LUser, sha:sha(term_to_binary(now()))),
+                            Version = set_roster_version_fun(LUser, sha:sha(term_to_binary(now()))),
                             {ok, ok, State8} = Version(Module, State7),
                             State8;
                         false ->
@@ -691,7 +694,7 @@ remove_user(User, Server) ->
     LUser = jlib:nodeprep(User),
     LServer = jlib:nameprep(Server),
     send_unsubscription_to_rosteritems(LUser, LServer),
-    Delete = ejabberd_bank:del_roster_fun(LUser),
+    Delete = del_roster_fun(LUser),
     {ok, ok} = ejabberd_bank:transaction(LServer, Delete),
     ok.
 
@@ -770,13 +773,13 @@ process_item_set_t(LUser, LServer, {xmlelement, _Name, Attrs, Els}, Module, Stat
             Item2 = process_item_els(Item1, Els),
             case Item2#roster.subscription of
                 remove ->
-                    Delete = ejabberd_bank:del_roster_fun(LUser, SJID),
+                    Delete = del_roster_fun(LUser, SJID),
                     {ok, ok, State1} = Delete(Module, State),
                     State1;
                 _ ->
                     ItemVals = record_to_binary(Item1),
                     ItemGroups = groups_to_binary(Item2),
-                    Update = ejabberd_bank:update_roster_fun(LUser, SJID, ItemVals, ItemGroups),
+                    Update = update_roster_fun(LUser, SJID, ItemVals, ItemGroups),
                     {ok, ok, State1} = Update(Module, State),
                     State1
             end
@@ -813,7 +816,7 @@ get_in_pending_subscriptions(Ls, User, Server) ->
     JID = jlib:make_jid(User, Server, <<"">>),
     LUser = JID#jid.luser,
     LServer = JID#jid.lserver,
-    case ejabberd_bank:get_roster(LServer, LUser) of
+    case get_roster_q(LServer, LUser) of
         {ok, Items} ->
     	    Ls ++ lists:map(
                     fun(R) ->
@@ -852,7 +855,7 @@ get_jid_info(_, User, Server, JID) ->
     LServer = jlib:nameprep(Server),
     LJID = jlib:jid_tolower(JID),
     SJID = jlib:jid_to_binary(LJID),
-    case ejabberd_bank:get_subscription(LServer, LUser, SJID) of
+    case get_subscription_q(LServer, LUser, SJID) of
         {rows, [[{<<"subscription">>, BSubscription}]]} ->
             Subscription = case BSubscription of
                 <<"B">> -> both;
@@ -860,7 +863,7 @@ get_jid_info(_, User, Server, JID) ->
                 <<"F">> -> from;
                 _ -> none
             end,
-            Groups = case ejabberd_bank:get_rostergroup(LServer, LUser, SJID) of
+            Groups = case get_rostergroup_q(LServer, LUser, SJID) of
                 {rows, JGrps} ->
                     [JGrp || [{<<"grp">>, JGrp}] <- JGrps];
                 _ ->
@@ -874,7 +877,7 @@ get_jid_info(_, User, Server, JID) ->
                     {none, []};
                 true ->
                     SRJID = jlib:jid_to_binary(LRJID),
-                    case ejabberd_bank:get_subscription(LServer, LUser, SRJID) of
+                    case get_subscription_q(LServer, LUser, SRJID) of
                         {rows, [[{<<"subscription">>, BSubscription}]]} ->
                             Subscription = case BSubscription of
                                 <<"B">> -> both;
@@ -882,7 +885,7 @@ get_jid_info(_, User, Server, JID) ->
                                 <<"F">> -> from;
                                 _ -> none
                             end,
-                            Groups = case ejabberd_bank:get_rostergroup(LServer, LUser, SRJID) of
+                            Groups = case get_rostergroup_q(LServer, LUser, SRJID) of
                                 {rows, JGrps} ->
                                     [JGrp || [{<<"grp">>, JGrp}] <- JGrps];
                                 _ ->
@@ -1148,3 +1151,124 @@ us_to_list({User, Server}) ->
 
 webadmin_user(Acc, _User, _Server, Lang) ->
     Acc ++ [?XE("h3", [?ACT("roster/", "Roster")])].
+
+%%%===================================================================
+%%% Queries
+%%%===================================================================
+
+get_roster_version_q(Server, Username) ->
+    bank:execute(Server, get_roster_version, [Server, Username]).
+
+set_roster_version_fun(Username, Version) ->
+    ejabberd_bank:update_fun(get_roster_version,
+               [Username],
+               update_roster_version,
+               [Version, Username],
+               add_roster_version,
+               [Username, Version]).
+
+set_roster_version_q(Server, Username, Version) ->
+    T = set_roster_version_fun(Username, Version),
+    bank:batch(Server, ejabberd_bank:transaction(T)).
+
+del_roster_fun(Username, SJID) ->
+    fun(Module, State) ->
+            {ok, _, _, State2} = Module:execute(del_roster, [Username, SJID], State),
+            {ok, _, _, State3} = Module:execute(del_rostergroup, [Username, SJID], State2),
+            {ok, ok, State3}
+    end.
+
+del_roster_fun(Username) ->
+    fun(Module, State) ->
+            {ok, _, _, State2} = Module:execute(del_roster_username, [Username], State),
+            {ok, _, _, State3} = Module:execute(del_rostergroup_username, [Username], State2),
+            {ok, ok, State3}
+    end.
+
+update_roster_fun(Username, SJID, [Username, SJID | ItemRest] = ItemVals, ItemGroups) ->
+    fun(Module, State) ->
+            Update = ejabberd_bank:update_fun(get_roster_by_jid,
+                                [Username, SJID],
+                                update_roster,
+                                ItemRest ++ [Username, SJID],
+                                add_roster,
+                                ItemVals),
+            {ok, ok, State2} = Update(Module, State),
+            {ok, _, _, State3} = Module:execute(del_rostergroup, [Username, SJID], State2),
+            NewState = lists:foldl(fun(ItemGroup, AccState) ->
+                            {ok, _, _, CurrState} = Module:execute(add_rostergroup, ItemGroup, AccState),
+                            CurrState
+                    end, State3, ItemGroups),
+            {ok, ok, NewState}
+    end.
+
+roster_subscribe_fun(Username, SJID, [Username, SJID | ItemRest] = ItemVals) ->
+    ejabberd_bank:update_fun(get_roster_by_jid,
+               [Username, SJID],
+               update_roster,
+               ItemRest ++ [Username, SJID],
+               add_roster,
+               ItemVals).
+
+get_rostergroups_q(Server, Username) ->
+    B = fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(get_rostergroups, [Username], State),
+            {rows, Rows, State3} = Module:fetch_all(State2),
+            {ok, Rows, State3}
+    end,
+    bank:batch(Server, B).
+
+get_roster_q(Server, Username) ->
+    B = fun(Module, State) ->
+            {result_set, _, State2} = Module:execute(get_roster, [Username], State),
+            {rows, Rows, State3} = Module:fetch_all(State2),
+            {ok, Rows, State3}
+    end,
+    bank:batch(Server, B).
+
+get_subscription_q(Server, Username, SJID) ->
+    bank:execute(Server, get_subscription, [Username, SJID]).
+
+get_rostergroup_q(Server, Username, SJID) ->
+    bank:execute(Server, get_rostergroup, [Username, SJID]).
+
+%%%===================================================================
+%%% Behaviour
+%%%==================================================================o
+
+ prepared_statements() ->
+    [{get_roster_version,
+     <<"select version from roster_version where username = ?">>},
+    {update_roster_version,
+     <<"update roster_version set version = ? where username = ?">>},
+    {add_roster_version,
+     <<"insert into roster_version(username, version) values (?, ?)">>},
+    {get_roster_by_jid,
+     <<"select username, jid, nick, subscription, ask, askmessage, server, subscribe, "
+       "type from rosterusers where username = ? and jid = ?">>},
+    {get_roster,
+     <<"select username, jid, nick, subscription, ask, askmessage, server, subscribe, "
+       "type from rosterusers where username = ?">>},
+    {update_roster,
+     <<"update rosterusers set nick = ?, subscription = ?, "
+       "ask = ?, askmessage = ?, server = ?, subscribe = ?, type = ? "
+       "where username = ? and jid = ?">>},
+    {add_roster,
+     <<"insert into rosterusers(username, jid, nick, subscription, ask, "
+       "askmessage, server, subscribe, type) values (?, ?, ?, ?, ?, ?, ?, ?, ?)">>},
+    {del_roster,
+     <<"delete from rosterusers where username = ? and jid = ?">>},
+    {del_rostergroup,
+     <<"delete from rostergroups where username = ? and jid = ?">>},
+    {del_roster_username,
+     <<"delete from rosterusers where username = ?">>},
+    {del_rostergroup_username,
+     <<"delete from rostergroups where username = ?">>},
+    {add_rostergroup,
+     <<"insert into rostergroups(username, jid, grp) values (?, ?, ?)">>},
+    {get_rostergroups,
+     <<"select jid, grp from rostergroups where username = ?">>},
+    {get_subscription,
+     <<"select subscription from rosterusers where username = ? and jid = ? ">>},
+    {get_rostergroup,
+     <<"select grp from rostergroups where username = ? and jid = ?">>}].
