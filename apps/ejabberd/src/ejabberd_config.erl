@@ -33,6 +33,11 @@
 -export([get_vh_by_auth_method/1]).
 -export([is_file_readable/1]).
 
+-export([prepare_opt_val/4,
+         get_global_option/2,
+         get_local_option/2,
+         get_local_option/3]).
+
 -include("ejabberd.hrl").
 -include("ejabberd_config.hrl").
 -include_lib("kernel/include/file.hrl").
@@ -578,6 +583,17 @@ get_global_option(Opt) ->
             undefined
     end.
 
+get_global_option(Opt, F) ->
+    get_global_option(Opt, F, undefined).
+
+get_global_option(Opt, F, Default) ->
+    case ets:lookup(config, Opt) of
+        [#config{value = Val}] ->
+            prepare_opt_val(Opt, Val, F, Default);
+        _ ->
+            Default
+    end.
+
 get_local_option(Opt) ->
     case ets:lookup(local_config, Opt) of
         [#local_config{value = Val}] ->
@@ -603,4 +619,36 @@ is_file_readable(Path) ->
             end;
         {error, _Reason} ->
             false
+    end.
+
+prepare_opt_val(Opt, Val, F, Default) ->
+    Res = case F of
+        {Mod, Fun} ->
+            catch Mod:Fun(Val);
+        _ ->
+            catch F(Val)
+    end,
+    case Res of
+        {'EXIT', _} ->
+            ?INFO_MSG("Configuration problem:~n"
+                      "** Option: ~p~n"
+                      "** Invalid value: ~p~n"
+                      "** Using as fallback: ~p",
+                      [Opt,
+                       Val,
+                       Default]),
+            Default;
+        _ ->
+            Res
+    end.
+
+get_local_option(Opt, F) ->
+    get_local_option(Opt, F, undefined).
+
+get_local_option(Opt, F, Default) ->
+    case ets:lookup(local_config, Opt) of
+        [#local_config{value = Val}] ->
+            prepare_opt_val(Opt, Val, F, Default);
+        _ ->
+            Default
     end.

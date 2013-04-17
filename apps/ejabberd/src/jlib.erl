@@ -61,6 +61,17 @@
          rsm_encode/1,
          rsm_decode/1]).
 
+-export([tolower/1,
+         binary_to_atom/1,
+         integer_to_binary/1,
+         integer_to_binary/2,
+         tuple_to_binary/1,
+         atom_to_binary/1,
+         binary_to_integer/1,
+         binary_to_integer/2,
+         string_to_jid/1,
+         jid_to_string/1]).
+
 -include("jlib.hrl").
 
 make_result_iq_reply({xmlel, Name, Attrs, SubTags}) ->
@@ -771,3 +782,88 @@ ip_to_list({A,B,C,D}) ->
     lists:flatten(io_lib:format("~w.~w.~w.~w",[A,B,C,D]));
 ip_to_list(IP) ->
     lists:flatten(io_lib:format("~w", [IP])).
+
+
+-spec tolower(binary()) -> binary().
+
+tolower(B) ->
+    iolist_to_binary(tolower_s(binary_to_list(B))).
+
+tolower_s([C | Cs]) ->
+    if C >= $A, C =< $Z -> [C + 32 | tolower_s(Cs)];
+        true -> [C | tolower_s(Cs)]
+    end;
+tolower_s([]) -> [].
+
+%-spec string_to_jid(binary()) -> jid() | error.
+
+string_to_jid(S) ->
+    string_to_jid1(binary_to_list(S), "").
+
+string_to_jid1([$@ | _J], "") -> error;
+string_to_jid1([$@ | J], N) ->
+    string_to_jid2(J, lists:reverse(N), "");
+string_to_jid1([$/ | _J], "") -> error;
+string_to_jid1([$/ | J], N) ->
+    string_to_jid3(J, "", lists:reverse(N), "");
+string_to_jid1([C | J], N) ->
+    string_to_jid1(J, [C | N]);
+string_to_jid1([], "") -> error;
+string_to_jid1([], N) ->
+    make_jid(<<"">>, list_to_binary(lists:reverse(N)), <<"">>).
+
+% Only one "@" is admitted per JID
+string_to_jid2([$@ | _J], _N, _S) -> error;
+string_to_jid2([$/ | _J], _N, "") -> error;
+string_to_jid2([$/ | J], N, S) ->
+    string_to_jid3(J, N, lists:reverse(S), "");
+string_to_jid2([C | J], N, S) ->
+    string_to_jid2(J, N, [C | S]);
+string_to_jid2([], _N, "") -> error;
+string_to_jid2([], N, S) ->
+    make_jid(list_to_binary(N), list_to_binary(lists:reverse(S)), <<"">>).
+
+string_to_jid3([C | J], N, S, R) ->
+    string_to_jid3(J, N, S, [C | R]);
+string_to_jid3([], N, S, R) ->
+    make_jid(list_to_binary(N), list_to_binary(S),
+             list_to_binary(lists:reverse(R))).
+
+binary_to_atom(Bin) ->
+    erlang:binary_to_atom(Bin, utf8).
+
+binary_to_integer(Bin) ->
+    list_to_integer(binary_to_list(Bin)).
+
+binary_to_integer(Bin, Base) ->
+    list_to_integer(binary_to_list(Bin), Base).
+
+integer_to_binary(I) ->
+    list_to_binary(integer_to_list(I)).
+
+integer_to_binary(I, Base) ->
+    list_to_binary(erlang:integer_to_list(I, Base)).
+
+tuple_to_binary(T) ->
+    iolist_to_binary(tuple_to_list(T)).
+
+atom_to_binary(A) ->
+    erlang:atom_to_binary(A, utf8).
+
+jid_to_string(#jid{user = User, server = Server,
+                   resource = Resource}) ->
+    jid_to_string({User, Server, Resource});
+jid_to_string({N, S, R}) ->
+    Node = iolist_to_binary(N),
+    Server = iolist_to_binary(S),
+    Resource = iolist_to_binary(R),
+    S1 = case Node of
+        <<"">> -> <<"">>;
+        _ -> <<Node/binary, "@">>
+    end,
+    S2 = <<S1/binary, Server/binary>>,
+    S3 = case Resource of
+        <<"">> -> S2;
+        _ -> <<S2/binary, "/", Resource/binary>>
+    end,
+    S3.

@@ -42,6 +42,9 @@
 	 get_module_proc/2,
 	 is_loaded/2]).
 
+-export([db_type/1,
+         db_type/2]).
+
 -export([behaviour_info/1]).
 
 -include("ejabberd.hrl").
@@ -247,3 +250,14 @@ get_module_proc(Host, Base) ->
 is_loaded(Host, Module) ->
     ets:member(ejabberd_modules, {Module, Host}).
 
+%-spec db_type(opts()) -> odbc | mnesia.
+
+db_type(Opts) ->
+    get_opt(db_type, Opts,
+            mnesia).
+
+-spec db_type(binary(), atom()) -> odbc | mnesia.
+
+db_type(Host, Module) ->
+    get_module_opt(Host, Module, db_type,
+                   mnesia).

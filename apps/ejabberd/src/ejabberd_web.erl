@@ -1,4 +1,10 @@
 %%%----------------------------------------------------------------------
+%%% File    : ejabberd_web.erl
+%%% Author  : Alexey Shchepin <alexey@process-one.net>
+%%% Purpose : 
+%%% Purpose :
+%%% Created : 28 Feb 2004 by Alexey Shchepin <alexey@process-one.net>
+%%%
 %%%
 %%% ejabberd, Copyright (C) 2002-2013   ProcessOne
 %%%
@@ -18,6 +24,44 @@
 %%% 02111-1307 USA
 %%%
 %%%----------------------------------------------------------------------
+
+-module(ejabberd_web).
+
+-author('alexey@process-one.net').
+
+%% External exports
+-export([make_xhtml/1, make_xhtml/2, error/1]).
+
+-include("ejabberd.hrl").
+
+-include("jlib.hrl").
+
+-include("ejabberd_http.hrl").
+
+%% XXX bard: there are variants of make_xhtml in ejabberd_http and
+%% ejabberd_web_admin.  It might be a good idea to centralize it here
+%% and also create an ejabberd_web.hrl file holding the macros, so
+%% that third parties can use ejabberd_web as an "utility" library.
+
+make_xhtml(Els) -> make_xhtml([], Els).
+
+make_xhtml(HeadEls, Els) ->
+    #xmlel{name = <<"html">>,
+	   attrs =
+	       [{<<"xmlns">>, <<"http://www.w3.org/1999/xhtml">>},
+		{<<"xml:lang">>, <<"en">>}, {<<"lang">>, <<"en">>}],
+	   children =
+	       [#xmlel{name = <<"head">>, attrs = [],
+		       children =
+			   [#xmlel{name = <<"meta">>,
+				   attrs =
+				       [{<<"http-equiv">>, <<"Content-Type">>},
+					{<<"content">>,
+					 <<"text/html; charset=utf-8">>}],
+				   children = []}
+			    | HeadEls]},
+		#xmlel{name = <<"body">>, attrs = [], children = Els}]}.
+
 -define(X(Name),
 	#xmlel{name = Name, attrs = [], children = []}).
 
@@ -37,23 +81,12 @@
 -define(XAC(Name, Attrs, Text),
 	?XAE(Name, Attrs, [?C(Text)])).
 
--define(T(Text), translate:translate(Lang, Text)).
-
--define(CT(Text), ?C((?T(Text)))).
-
--define(XCT(Name, Text), ?XC(Name, (?T(Text)))).
-
--define(XACT(Name, Attrs, Text),
-	?XAC(Name, Attrs, (?T(Text)))).
-
 -define(LI(Els), ?XE(<<"li">>, Els)).
 
 -define(A(URL, Els),
 	?XAE(<<"a">>, [{<<"href">>, URL}], Els)).
 
 -define(AC(URL, Text), ?A(URL, [?C(Text)])).
-
--define(ACT(URL, Text), ?AC(URL, (?T(Text)))).
 
 -define(P, ?X(<<"p">>)).
 
@@ -64,41 +97,9 @@
 	    [{<<"type">>, Type}, {<<"name">>, Name},
 	     {<<"value">>, Value}])).
 
--define(INPUTT(Type, Name, Value),
-	?INPUT(Type, Name, (?T(Value)))).
-
--define(INPUTS(Type, Name, Value, Size),
-	?XA(<<"input">>,
-	    [{<<"type">>, Type}, {<<"name">>, Name},
-	     {<<"value">>, Value}, {<<"size">>, Size}])).
-
--define(INPUTST(Type, Name, Value, Size),
-	?INPUT(Type, Name, (?T(Value)), Size)).
-
--define(ACLINPUT(Text),
-	?XE(<<"td">>,
-	    [?INPUT(<<"text">>, <<"value", ID/binary>>, Text)])).
-
--define(TEXTAREA(Name, Rows, Cols, Value),
-	?XAC(<<"textarea">>,
-	     [{<<"name">>, Name}, {<<"rows">>, Rows},
-	      {<<"cols">>, Cols}],
-	     Value)).
-
-%% Build an xmlelement for result
--define(XRES(Text),
-	?XAC(<<"p">>, [{<<"class">>, <<"result">>}], Text)).
-
-%% Guide Link
--define(XREST(Text), ?XRES((?T(Text)))).
-
--define(GL(Ref, Title),
-	?XAE(<<"div">>, [{<<"class">>, <<"guidelink">>}],
-	     [?XAE(<<"a">>,
-		   [{<<"href">>, <<"/admin/doc/guide.html#", Ref/binary>>},
-		    {<<"target">>, <<"_blank">>}],
-		   [?C(<<"[Guide: ", Title/binary, "]">>)])])).
-
-%% h1 with a Guide Link
--define(H1GL(Name, Ref, Title),
-	[?XC(<<"h1">>, Name), ?GL(Ref, Title)]).
+error(not_found) ->
+    {404, [],
+     make_xhtml([?XC(<<"h1">>, <<"404 Not Found">>)])};
+error(not_allowed) ->
+    {401, [],
+     make_xhtml([?XC(<<"h1">>, <<"401 Unauthorized">>)])}.

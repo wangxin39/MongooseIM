@@ -18,6 +18,7 @@
 %%% 02111-1307 USA
 %%%
 %%%----------------------------------------------------------------------
+-include_lib("exml/include/exml_stream.hrl").
 
 -define(NS_DISCO_ITEMS,  <<"http://jabber.org/protocol/disco#items">>).
 -define(NS_DISCO_INFO,   <<"http://jabber.org/protocol/disco#info">>).
