@@ -461,6 +461,10 @@ process_host_term(Term, Host, State) ->
             State;
         {odbc_server, ODBC_server} ->
             add_option({odbc_server, Host}, ODBC_server, State);
+        {wp_logged_in_key, WPLoggedInKey} ->
+            add_option({wp_logged_in_key, Host}, list_to_binary(WPLoggedInKey), State);
+        {wp_logged_in_salt, WPLoggedInSalt} ->
+            add_option({wp_logged_in_salt, Host}, list_to_binary(WPLoggedInSalt), State);
         {Opt, Val} ->
             add_option({Opt, Host}, Val, State)
     end.
