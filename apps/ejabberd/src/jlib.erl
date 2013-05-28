@@ -63,9 +63,9 @@
 
 -include("jlib.hrl").
 
-make_result_iq_reply(XE = #xmlel{attrs = Attrs}) ->
+make_result_iq_reply({xmlel, Name, Attrs, SubTags}) ->
     NewAttrs = make_result_iq_reply_attrs(Attrs),
-    XE#xmlel{attrs = NewAttrs}.
+    {xmlel, Name, NewAttrs, SubTags}.
 
 make_result_iq_reply_attrs(Attrs) ->
     To = xml:get_attr(<<"to">>, Attrs),
@@ -88,10 +88,9 @@ make_result_iq_reply_attrs(Attrs) ->
     Attrs6 = [{<<"type">>, <<"result">>} | Attrs5],
     Attrs6.
 
-make_error_reply(#xmlel{name = Name, attrs = Attrs,
-                        children = SubTags}, Error) ->
+make_error_reply({xmlel, Name, Attrs, SubTags}, Error) ->
     NewAttrs = make_error_reply_attrs(Attrs),
-    #xmlel{name = Name, attrs = NewAttrs, children = SubTags ++ [Error]}.
+    {xmlel, Name, NewAttrs, SubTags ++ [Error]}.
 
 make_error_reply_attrs(Attrs) ->
     To = xml:get_attr(<<"to">>, Attrs),
@@ -115,42 +114,46 @@ make_error_reply_attrs(Attrs) ->
     Attrs6.
 
 make_config_change_message(Status) ->
-    #xmlel{name = <<"message">>, attrs = [{<<"type">>, <<"groupchat">>}],
-           children = [#xmlel{name = <<"x">>,
-                              attrs = [{<<"xmlns">>, ?NS_MUC_USER}],
-                              children = [#xmlel{name = <<"status">>,
-                                                 attrs = [{<<"code">>, Status}]}]}]}.
+    {xmlel, <<"message">>,
+        [{<<"type">>, <<"groupchat">>}],
+        [{xmlel, <<"x">>,
+            [{<<"xmlns">>, ?NS_MUC_USER}],
+            [{xmlel, <<"status">>,
+                [{<<"code">>, Status}],
+                []
+            }]
+        }]
+    }.
 
 make_invitation(From, Password, Reason) ->
-    Elements = [#xmlel{name = <<"invite">>,
-                       attrs = [{<<"from">>, jlib:jid_to_binary(From)}]}],
+    Elements = [{xmlel, <<"invite">>,
+        [{<<"from">>, jlib:jid_to_binary(From)}], []}],
     Elements2 = case Password of
         <<>> -> Elements;
-        _ -> [#xmlel{name = <<"password">>,
-                     children = [#xmlcdata{content = Password}]} | Elements]
-                end,
+        _ -> [{xmlel, <<"password">>, [], [{xmlcdata, Password}]} | Elements]
+    end,
     Elements3 = case Reason of
         <<>> -> Elements2;
-        _ -> [#xmlel{name = <<"reason">>,
-                     children = [#xmlcdata{content = Reason}]} | Elements2]
-                end,
+        _ -> [{xmlel, <<"reason">>, [], [{xmlcdata, Reason}]} | Elements2]
+    end,
 
-    #xmlel{name = <<"message">>,
-           children = [#xmlel{name = <<"x">>,
-                              attrs = [{<<"xmlns">>, ?NS_MUC_USER}],
-                              children = Elements3}]}.
+    {xmlel, <<"message">>,
+        [],
+        [{xmlel, <<"x">>,
+            [{<<"xmlns">>, ?NS_MUC_USER}],
+            Elements3
+        }]
+     }.
 
 form_field({Var, Type, Value, Label}) ->
-    #xmlel{name = <<"field">>,
-           attrs = [{<<"var">>, Var}, {<<"type">>, Type}, {<<"label">>, Label}],
-           children = [#xmlel{name = <<"value">>,
-                              children = [#xmlcdata{content = Value}]}]};
+    {xmlel, <<"field">>,
+        [{<<"var">>, Var}, {<<"type">>, Type}, {<<"label">>, Label}],
+        [{xmlel, <<"value">>, [], [{xmlcdata, Value}]}]};
 
 form_field({Var, Type, Value}) ->
-    #xmlel{name = <<"field">>,
-           attrs = [{<<"var">>, Var}, {<<"type">>, Type}],
-           children = [#xmlel{name = <<"value">>,
-                              children = [#xmlcdata{content = Value}]}]}.
+    {xmlel, <<"field">>,
+        [{<<"var">>, Var}, {<<"type">>, Type}],
+        [{xmlel, <<"value">>, [], [{xmlcdata, Value}]}]}.
 
 make_voice_approval_form(From, Nick, Role) ->
     Fields = [{<<"FORM_TYPE">>, <<"hidden">>, ?NS_MUC_REQUEST},
@@ -159,19 +162,16 @@ make_voice_approval_form(From, Nick, Role) ->
         {<<"muc#roomnick">>, <<"text-single">>, Nick, <<"Room Nickname">>},
         {<<"muc#request_allow">>, <<"boolean">>, <<"false">>, <<"Grant voice to this person?">>}
     ],
-    #xmlel{name = <<"message">>,
-           children = [
-#xmlel{name = <<"x">>,
-      attrs = [{<<"xmlns">>, ?NS_XDATA}, {<<"type">>, <<"form">>}],
-      children = [#xmlel{name = <<"title">>,
-                         children = [#xmlcdata{content = <<"Voice request">>}]},
-                  #xmlel{name = <<"instructions">>,
-                         children = [#xmlcdata{content = <<"To approve this request",
+    {xmlel, <<"message">>, [], [
+        {xmlel, <<"x">>, [{<<"xmlns">>, ?NS_XDATA}, {<<"type">>, <<"form">>}],
+            [{xmlel, <<"title">>, [], [{xmlcdata, <<"Voice request">>}]},
+             {xmlel, <<"instructions">>, [], [{xmlcdata, <<"To approve this request",
                 " for voice, select the &quot;Grant voice to this person?&quot; checkbox",
                 " and click OK. To skip this request, click the cancel button.">>}]} |
              [form_field(El) || El <- Fields]
-                 ]}
-]}.
+            ]
+        }
+    ]}.
 
 replace_from_to_attrs(From, To, Attrs) ->
     Attrs1 = lists:keydelete(<<"to">>, 1, Attrs),
@@ -180,15 +180,15 @@ replace_from_to_attrs(From, To, Attrs) ->
     Attrs4 = [{<<"from">>, From} | Attrs3],
     Attrs4.
 
-replace_from_to(From, To, XE = #xmlel{attrs = Attrs}) ->
+replace_from_to(From, To, {xmlel, Name, Attrs, Els}) ->
     NewAttrs = replace_from_to_attrs(jlib:jid_to_binary(From),
                                      jlib:jid_to_binary(To),
                                      Attrs),
-    XE#xmlel{attrs = NewAttrs}.
+    {xmlel, Name, NewAttrs, Els}.
 
-remove_attr(Attr, XE = #xmlel{attrs = Attrs}) ->
+remove_attr(Attr, {xmlel, Name, Attrs, Els}) ->
     NewAttrs = lists:keydelete(Attr, 1, Attrs),
-    XE#xmlel{attrs = NewAttrs}.
+    {xmlel, Name, NewAttrs, Els}.
 
 
 -spec make_jid(User, Server, Resource) -> JID when
@@ -354,6 +354,12 @@ jid_remove_resource(#jid{} = JID) ->
 jid_remove_resource({U, S, _R}) ->
     {U, S, <<>>}.
 
+jid_replace_resource({U, S, _R}, Resource) ->
+    case resourceprep(Resource) of
+        error -> error;
+        LResource ->
+            {U, S, LResource}
+    end;
 jid_replace_resource(JID, Resource) ->
     case resourceprep(Resource) of
         error -> error;
@@ -367,8 +373,7 @@ iq_query_info(El) ->
 iq_query_or_response_info(El) ->
     iq_info_internal(El, any).
 
-iq_info_internal(#xmlel{name = Name, attrs = Attrs,
-                        children = Els}, Filter) when Name == <<"iq">> ->
+iq_info_internal({xmlel, Name, Attrs, Els}, Filter) when Name == <<"iq">> ->
     %% Filter is either request or any.  If it is request, any replies
     %% are converted to the atom reply.
     ID = xml:get_attr_s(<<"id">>, Attrs),
@@ -391,14 +396,14 @@ iq_info_internal(#xmlel{name = Name, attrs = Attrs,
             FilteredEls = xml:remove_cdata(Els),
             {XMLNS, SubEl} =
                 case {Class, FilteredEls} of
-                    {request, [#xmlel{attrs = Attrs2}]} ->
+                    {request, [{xmlel, _Name2, Attrs2, _Els2}]} ->
                         {xml:get_attr_s(<<"xmlns">>, Attrs2),
                          hd(FilteredEls)};
                     {reply, _} ->
                         %% Find the namespace of the first non-error
                         %% element, if there is one.
                         NonErrorEls = [El ||
-                                          #xmlel{name = SubName} = El
+                                          {xmlel, SubName, _, _} = El
                                               <- FilteredEls,
                                           SubName /= <<"error">>],
                         {case NonErrorEls of
@@ -436,25 +441,25 @@ iq_type_to_binary(_) -> invalid.
 iq_to_xml(#iq{id = ID, type = Type, sub_el = SubEl}) ->
     if
         ID /= "" ->
-            #xmlel{name = <<"iq">>,
-                   attrs = [{<<"id">>, ID}, {<<"type">>, iq_type_to_binary(Type)}],
-                   children = sub_el_to_els(SubEl)};
+            {xmlel, <<"iq">>,
+             [{<<"id">>, ID}, {<<"type">>, iq_type_to_binary(Type)}],
+              sub_el_to_els(SubEl)};
         true ->
-            #xmlel{name = <<"iq">>,
-                   attrs = [{<<"type">>, iq_type_to_binary(Type)}],
-                   children = sub_el_to_els(SubEl)}
+            {xmlel, <<"iq">>,
+             [{<<"type">>, iq_type_to_binary(Type)}],
+              sub_el_to_els(SubEl)}
     end.
 
 %% @doc Convert `#iq.sub_el' back to `#xmlel.children'.
 %% @end
 %% for requests.
-sub_el_to_els(#xmlel{}=E) -> [E];
+sub_el_to_els({xmlel,_,_,_}=E) -> [E];
 %% for replies.
 sub_el_to_els(Es) when is_list(Es) -> Es.
 
 
 parse_xdata_submit(El) ->
-    #xmlel{attrs = Attrs, children = Els} = El,
+    {xmlel, _Name, Attrs, Els} = El,
     case xml:get_attr_s(<<"type">>, Attrs) of
         <<"submit">> ->
             lists:reverse(parse_xdata_fields(Els, []));
@@ -466,8 +471,7 @@ parse_xdata_submit(El) ->
 
 parse_xdata_fields([], Res) ->
     Res;
-parse_xdata_fields([#xmlel{name = Name, attrs = Attrs,
-                           children = SubEls} | Els], Res) ->
+parse_xdata_fields([{xmlel, Name, Attrs, SubEls} | Els], Res) ->
     case Name of
         <<"field">> ->
             case xml:get_attr_s(<<"var">>, Attrs) of
@@ -486,8 +490,7 @@ parse_xdata_fields([_ | Els], Res) ->
 
 parse_xdata_values([], Res) ->
     Res;
-parse_xdata_values([#xmlel{name = Name,
-                           children = SubEls} | Els], Res) ->
+parse_xdata_values([{xmlel, Name, _Attrs, SubEls} | Els], Res) ->
     case Name of
         <<"value">> ->
             Val = xml:get_cdata(SubEls),
@@ -500,29 +503,28 @@ parse_xdata_values([_ | Els], Res) ->
 
 rsm_decode(#iq{sub_el=SubEl})->
     rsm_decode(SubEl);
-rsm_decode(#xmlel{}=SubEl) ->
+rsm_decode({xmlel, _,_,_}=SubEl)->
     case xml:get_subtag(SubEl,<<"set">>) of
         false ->
             none;
-        #xmlel{name = <<"set">>, children = SubEls} ->
+        {xmlel, <<"set">>, _Attrs, SubEls}->
             lists:foldl(fun rsm_parse_element/2, #rsm_in{}, SubEls)
     end.
 
-rsm_parse_element(#xmlel{name = <<"max">>, attrs = []}=Elem, RsmIn) ->
+rsm_parse_element({xmlel, <<"max">>,[], _}=Elem, RsmIn)->
     CountStr = xml:get_tag_cdata(Elem),
     {Count, _} = string:to_integer(binary_to_list(CountStr)),
     RsmIn#rsm_in{max=Count};
 
-rsm_parse_element(#xmlel{name = <<"before">>,
-                         attrs = []}=Elem, RsmIn) ->
+rsm_parse_element({xmlel, <<"before">>, [], _}=Elem, RsmIn)->
     UID = xml:get_tag_cdata(Elem),
     RsmIn#rsm_in{direction=before, id=UID};
 
-rsm_parse_element(#xmlel{name = <<"after">>, attrs = []}=Elem, RsmIn) ->
+rsm_parse_element({xmlel, <<"after">>, [], _}=Elem, RsmIn)->
     UID = xml:get_tag_cdata(Elem),
     RsmIn#rsm_in{direction=aft, id=UID};
 
-rsm_parse_element(#xmlel{name = <<"index">>, attrs = []}=Elem, RsmIn) ->
+rsm_parse_element({xmlel, <<"index">>,[], _}=Elem, RsmIn)->
     IndexStr = xml:get_tag_cdata(Elem),
     {Index, _} = string:to_integer(binary_to_list(IndexStr)),
     RsmIn#rsm_in{index=Index};
@@ -534,8 +536,7 @@ rsm_parse_element(_, RsmIn)->
 rsm_encode(none)->
     [];
 rsm_encode(RsmOut)->
-    [#xmlel{name = <<"set">>, attrs = [{<<"xmlns">>, ?NS_RSM}],
-            children = lists:reverse(rsm_encode_out(RsmOut))}].
+    [{xmlel, <<"set">>, [{<<"xmlns">>, ?NS_RSM}], lists:reverse(rsm_encode_out(RsmOut))}].
 rsm_encode_out(#rsm_out{count=Count, index=Index, first=First, last=Last})->
     El = rsm_encode_first(First, Index, []),
     El2 = rsm_encode_last(Last,El),
@@ -544,18 +545,17 @@ rsm_encode_out(#rsm_out{count=Count, index=Index, first=First, last=Last})->
 rsm_encode_first(undefined, undefined, Arr) ->
     Arr;
 rsm_encode_first(First, undefined, Arr) ->
-    [#xmlel{name = <<"first">>, children = [#xmlcdata{content = First}]}|Arr];
+    [{xmlel, <<"first">>,[], [{xmlcdata, First}]}|Arr];
 rsm_encode_first(First, Index, Arr) ->
-    [#xmlel{name = <<"first">>, attrs = [{<<"index">>, i2l(Index)}],
-            children = [#xmlcdata{content = First}]}|Arr].
+    [{xmlel, <<"first">>,[{<<"index">>, i2l(Index)}], [{xmlcdata, First}]}|Arr].
 
 rsm_encode_last(undefined, Arr) -> Arr;
 rsm_encode_last(Last, Arr) ->
-    [#xmlel{name = <<"last">>, children = [#xmlcdata{content = Last}]}|Arr].
+    [{xmlel, <<"last">>,[], [{xmlcdata, Last}]}|Arr].
 
 rsm_encode_count(undefined, Arr)-> Arr;
 rsm_encode_count(Count, Arr)->
-    [#xmlel{name = <<"count">>, children = [#xmlcdata{content = i2l(Count)}]} | Arr].
+    [{xmlel, <<"count">>,[], [{xmlcdata, i2l(Count)}]} | Arr].
 
 i2l(I) when is_integer(I) -> integer_to_list(I);
 i2l(L) when is_list(L)    -> L.
@@ -589,21 +589,22 @@ timestamp_to_iso({{Year, Month, Day}, {Hour, Minute, Second}}) ->
 
 timestamp_to_xml(DateTime, Timezone, FromJID, Desc) ->
     {T_string, Tz_string} = timestamp_to_iso(DateTime, Timezone),
-    Text = [#xmlcdata{content = Desc}],
+    Text = [{xmlcdata, Desc}],
     From = jlib:jid_to_binary(FromJID),
-    #xmlel{name = <<"delay">>,
-           attrs = [{<<"xmlns">>, ?NS_DELAY},
-                    {<<"from">>, From},
-                    {<<"stamp">>, list_to_binary(T_string ++ Tz_string)}],
-           children = Text}.
+    {xmlel, <<"delay">>,
+     [{<<"xmlns">>, ?NS_DELAY},
+      {<<"from">>, From},
+      {<<"stamp">>, list_to_binary(T_string ++ Tz_string)}],
+     Text}.
 
 %% TODO: Remove this function once XEP-0091 is Obsolete
 timestamp_to_xml({{Year, Month, Day}, {Hour, Minute, Second}}) ->
-    #xmlel{name = <<"x">>,
-           attrs = [{<<"xmlns">>, ?NS_DELAY91},
-                    {<<"stamp">>, lists:flatten(
-                                    io_lib:format("~4..0w~2..0w~2..0wT~2..0w:~2..0w:~2..0w",
-                                                  [Year, Month, Day, Hour, Minute, Second]))}]}.
+    {xmlel, <<"x">>,
+     [{<<"xmlns">>, ?NS_DELAY91},
+      {<<"stamp">>, lists:flatten(
+                      io_lib:format("~4..0w~2..0w~2..0wT~2..0w:~2..0w:~2..0w",
+                                    [Year, Month, Day, Hour, Minute, Second]))}],
+     []}.
 
 now_to_utc_string({MegaSecs, Secs, MicroSecs}) ->
     {{Year, Month, Day}, {Hour, Minute, Second}} =
@@ -716,7 +717,7 @@ decode_base64(S) when erlang:is_binary(S)->
     list_to_binary(decode_base64(binary_to_list(S)));
 decode_base64(S) ->
     decode1_base64([C || C <- S,
-                         C /= $\s,
+                         C /= $ ,
                          C /= $\t,
                          C /= $\n,
                          C /= $\r]).
