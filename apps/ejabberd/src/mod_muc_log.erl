@@ -383,7 +383,7 @@ add_message_to_log(Nick1, Message, RoomJID, Opts, State) ->
 		       <<"<font class=\"mj\">", Nick/binary, " ", (?T(<<"leaves the room">>))/binary, "</font><br/>">>;
 	       {leave, Reason} ->
 		       <<"<font class=\"ml\">", Nick/binary, " ", (?T(<<"leaves the room">>))/binary, ": ",
-		            (htmlize(Reason,NoFollow,FileFormat))/binary, ": ~s</font><br/>">>;
+		            (htmlize(Reason,NoFollow,FileFormat))/binary, "</font><br/>">>;
 	       {kickban, "301", ""} ->
 		       <<"<font class=\"mb\">", Nick/binary, " ", (?T(<<"has been banned">>))/binary, "</font><br/>">>;
 	       {kickban, "301", Reason} ->
@@ -923,8 +923,15 @@ get_room_occupants(RoomJIDString) ->
     RoomName = RoomJID#jid.luser,
     MucService = RoomJID#jid.lserver,
     StateData = get_room_state(RoomName, MucService),
-    [{U#user.jid, U#user.nick, U#user.role}
-     || {_, U} <- ?DICT:to_list(StateData#state.users)].
+    lists:flatmap(fun({_, U}) ->
+                lists:map(fun({Resource, Nick}) ->
+                            Role = case lists:keyfind(Nick, 1, U#user.nick_role) of
+                                {_, Role0} -> Role0;
+                                _ -> "Moderator"
+                            end,
+                            {jlib:jid_replace_resource(U#user.bjid, Resource), Nick, Role}
+                    end, U#user.res_nick)
+        end, ?DICT:to_list(StateData#state.users)).
 
 get_room_state(RoomName, MucService) ->
     case mnesia:dirty_read(muc_online_room, {RoomName, MucService}) of

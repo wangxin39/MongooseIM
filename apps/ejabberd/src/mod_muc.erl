@@ -41,7 +41,8 @@
 	 create_instant_room/5,
 	 process_iq_disco_items/4,
 	 broadcast_service_message/2,
-	 can_use_nick/3]).
+	 can_use_nick/3,
+     clear_room_history/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -138,9 +139,9 @@ forget_room(Host, Name) ->
 process_iq_disco_items(Host, From, To, #iq{lang = Lang} = IQ) ->
     Rsm = jlib:rsm_decode(IQ),
     Res = IQ#iq{type = result,
-		sub_el = [#xmlel{name = <<"query">>,
-			         attrs = [{<<"xmlns">>, ?NS_DISCO_ITEMS}],
-			         children = iq_disco_items(Host, From, Lang, Rsm)}]},
+		sub_el = [{xmlel, <<"query">>,
+			   [{<<"xmlns">>, ?NS_DISCO_ITEMS}],
+			   iq_disco_items(Host, From, Lang, Rsm)}]},
     ejabberd_router:route(To,
 			  From,
 			  jlib:iq_to_xml(Res)).
@@ -164,6 +165,10 @@ can_use_nick(Host, JID, Nick) ->
 	[#muc_registered{us_host = {U, _Host}}] ->
 	    U == LUS
     end.
+
+clear_room_history(Room, Host) ->
+    [#muc_online_room{pid = Pid}] = mnesia:dirty_read(muc_online_room, {Room, Host}),
+    mod_muc_room:clear_history(Pid).
 
 %%====================================================================
 %% gen_server callbacks
@@ -340,7 +345,7 @@ route_by_privilege({From, To, Packet} = Routed,
 	    {Room, _, _} = jlib:jid_tolower(To),
 	    route_to_room(Room, Routed, State);
 	_ ->
-	    #xmlel{attrs = Attrs} = Packet,
+	    {xmlel, _Name, Attrs, _Els} = Packet,
 	    Lang = xml:get_attr_s(<<"xml:lang">>, Attrs),
 	    ErrText = <<"Access denied by service policy">>,
 	    Err = jlib:make_error_reply(Packet,
@@ -368,7 +373,7 @@ route_to_room(Room, {From,To,Packet} = Routed, #state{host=Host} = State) ->
 
 route_to_nonexistent_room(Room, {From, To, Packet},
 			  #state{host=Host} = State) ->
-    #xmlel{name = Name, attrs = Attrs} = Packet,
+    {xmlel, Name, Attrs, _} = Packet,
     Type = xml:get_attr_s(<<"type">>, Attrs),
     case {Name, Type} of
 	{<<"presence">>, <<>>} ->
@@ -405,11 +410,11 @@ route_to_nonexistent_room(Room, {From, To, Packet},
 
 
 route_by_nick(<<>>, {_,_,Packet} = Routed, State) ->
-    #xmlel{name = Name} = Packet,
+    {xmlel, Name, _Attrs, _Els} = Packet,
     route_by_type(Name, Routed, State);
 
 route_by_nick(_Nick, {From, To, Packet}, _State) ->
-    #xmlel{attrs = Attrs} = Packet,
+    {xmlel, _Name, Attrs, _Els} = Packet,
     case xml:get_attr_s(<<"type">>, Attrs) of
 	<<"error">> ->
 	    ok;
@@ -428,17 +433,17 @@ route_by_type(<<"iq">>, {From, To, Packet}, #state{host = Host} = State) ->
 	    Info = ejabberd_hooks:run_fold(disco_info, ServerHost, [],
 					   [ServerHost, ?MODULE, <<>>, <<>>]),
 	    Res = IQ#iq{type = result,
-			sub_el = [#xmlel{name = <<"query">>,
-				         attrs = [{<<"xmlns">>, XMLNS}],
-				         children = iq_disco_info(Lang) ++ Info}]},
+			sub_el = [{xmlel, <<"query">>,
+				   [{<<"xmlns">>, XMLNS}],
+				   iq_disco_info(Lang) ++ Info}]},
 	    ejabberd_router:route(To, From, jlib:iq_to_xml(Res));
 	#iq{type = get, xmlns = ?NS_DISCO_ITEMS} = IQ ->
 	    spawn(?MODULE, process_iq_disco_items, [Host, From, To, IQ]);
 	#iq{type = get, xmlns = ?NS_REGISTER = XMLNS, lang = Lang} = IQ ->
 	    Res = IQ#iq{type = result,
-			sub_el = [#xmlel{name = <<"query">>,
-				         attrs = [{<<"xmlns">>, XMLNS}],
-			                 children = iq_get_register_info(Host, From, Lang)}]},
+			sub_el = [{xmlel, <<"query">>,
+				   [{<<"xmlns">>, XMLNS}],
+			           iq_get_register_info(Host, From, Lang)}]},
 	    ejabberd_router:route(To, From, jlib:iq_to_xml(Res));
 	#iq{type = set,
 	    xmlns = ?NS_REGISTER = XMLNS,
@@ -447,9 +452,9 @@ route_by_type(<<"iq">>, {From, To, Packet}, #state{host = Host} = State) ->
 	    case process_iq_register_set(Host, From, SubEl, Lang) of
 		{result, IQRes} ->
 		    Res = IQ#iq{type = result,
-				sub_el = [#xmlel{name = <<"query">>,
-					         attrs = [{<<"xmlns">>, XMLNS}],
-					         children = IQRes}]},
+				sub_el = [{xmlel, <<"query">>,
+					   [{<<"xmlns">>, XMLNS}],
+					   IQRes}]},
 		    ejabberd_router:route(To, From, jlib:iq_to_xml(Res));
 		{error, Error} ->
 		    Err = jlib:make_error_reply(Packet, Error),
@@ -457,15 +462,15 @@ route_by_type(<<"iq">>, {From, To, Packet}, #state{host = Host} = State) ->
 	    end;
 	#iq{type = get, xmlns = ?NS_VCARD = XMLNS, lang = Lang} = IQ ->
 	    Res = IQ#iq{type = result,
-			sub_el = [#xmlel{name = <<"vCard">>,
-				         attrs = [{<<"xmlns">>, XMLNS}],
-				         children = iq_get_vcard(Lang)}]},
+			sub_el = [{xmlel, <<"vCard">>,
+				   [{<<"xmlns">>, XMLNS}],
+				   iq_get_vcard(Lang)}]},
 	    ejabberd_router:route(To, From, jlib:iq_to_xml(Res));
 	#iq{type = get, xmlns = ?NS_MUC_UNIQUE} = IQ ->
 	   Res = IQ#iq{type = result,
-		       sub_el = [#xmlel{name = <<"unique">>,
-				        attrs = [{<<"xmlns">>, ?NS_MUC_UNIQUE}],
-				        children = [iq_get_unique(From)]}]},
+		       sub_el = [{xmlel, <<"unique">>,
+				  [{<<"xmlns">>, ?NS_MUC_UNIQUE}],
+				  [iq_get_unique(From)]}]},
 	   ejabberd_router:route(To, From, jlib:iq_to_xml(Res));
 	#iq{} ->
 	    Err = jlib:make_error_reply(Packet, ?ERR_FEATURE_NOT_IMPLEMENTED),
@@ -477,7 +482,7 @@ route_by_type(<<"iq">>, {From, To, Packet}, #state{host = Host} = State) ->
 route_by_type(<<"message">>, {From, To, Packet},
 	      #state{host = Host, server_host = ServerHost,
 	             access = {_,_,AccessAdmin,_}}) ->
-    #xmlel{attrs = Attrs} = Packet,
+    {xmlel, _Name, Attrs, _Els} = Packet,
     case xml:get_attr_s(<<"type">>, Attrs) of
 	<<"error">> ->
 	    ok;
@@ -564,17 +569,17 @@ register_room(Host, Room, Pid) ->
 
 
 iq_disco_info(Lang) ->
-    [#xmlel{name = <<"identity">>,
-            attrs = [{<<"category">>, <<"conference">>},
-                     {<<"type">>, <<"text">>},
-                     {<<"name">>, translate:translate(Lang, <<"Chatrooms">>)}]},
-     #xmlel{name = <<"feature">>, attrs = [{<<"var">>, ?NS_DISCO_INFO}]},
-     #xmlel{name = <<"feature">>, attrs = [{<<"var">>, ?NS_DISCO_ITEMS}]},
-     #xmlel{name = <<"feature">>, attrs = [{<<"var">>, ?NS_MUC}]},
-     #xmlel{name = <<"feature">>, attrs = [{<<"var">>, ?NS_MUC_UNIQUE}]},
-     #xmlel{name = <<"feature">>, attrs = [{<<"var">>, ?NS_REGISTER}]},
-     #xmlel{name = <<"feature">>, attrs = [{<<"var">>, ?NS_RSM}]},
-     #xmlel{name = <<"feature">>, attrs = [{<<"var">>, ?NS_VCARD}]}].
+    [{xmlel, <<"identity">>,
+      [{<<"category">>, <<"conference">>},
+       {<<"type">>, <<"text">>},
+       {<<"name">>, translate:translate(Lang, <<"Chatrooms">>)}], []},
+     {xmlel, <<"feature">>, [{<<"var">>, ?NS_DISCO_INFO}], []},
+     {xmlel, <<"feature">>, [{<<"var">>, ?NS_DISCO_ITEMS}], []},
+     {xmlel, <<"feature">>, [{<<"var">>, ?NS_MUC}], []},
+     {xmlel, <<"feature">>, [{<<"var">>, ?NS_MUC_UNIQUE}], []},
+     {xmlel, <<"feature">>, [{<<"var">>, ?NS_REGISTER}], []},
+     {xmlel, <<"feature">>, [{<<"var">>, ?NS_RSM}], []},
+     {xmlel, <<"feature">>, [{<<"var">>, ?NS_VCARD}], []}].
 
 
 iq_disco_items(Host, From, Lang, none) ->
@@ -584,9 +589,9 @@ iq_disco_items(Host, From, Lang, none) ->
 			 {item, Desc} ->
 			     flush(),
 			     {true,
-			      #xmlel{name = <<"item">>,
-			             attrs = [{<<"jid">>, jlib:jid_to_binary({Name, Host, <<>>})},
-				              {<<"name">>, Desc}]}};
+			      {xmlel, <<"item">>,
+			       [{<<"jid">>, jlib:jid_to_binary({Name, Host, <<>>})},
+				{<<"name">>, Desc}], []}};
 			 _ ->
 			     false
 		     end
@@ -601,9 +606,9 @@ iq_disco_items(Host, From, Lang, Rsm) ->
 			 {item, Desc} ->
 			     flush(),
 			     {true,
-			      #xmlel{name = <<"item">>,
-			             attrs = [{<<"jid">>, jlib:jid_to_binary({Name, Host, <<>>})},
-				              {<<"name">>, Desc}]}};
+			      {xmlel, <<"item">>,
+			       [{<<"jid">>, jlib:jid_to_binary({Name, Host, <<>>})},
+				{<<"name">>, Desc}], []}};
 			 _ ->
 			     false
 		     end
@@ -666,12 +671,10 @@ flush() ->
     end.
 
 -define(XFIELD(Type, Label, Var, Val),
-	#xmlel{name = <<"field">>,
-	       attrs = [{<<"type">>, Type},
-			 {<<"label">>, translate:translate(Lang, Label)},
-	                 {<<"var">>, Var}],
-               children = [#xmlel{name = <<"value">>,
-                                  children = [#xmlcdata{content = Val}]}]}).
+	{xmlel, <<"field">>, [{<<"type">>, Type},
+			       {<<"label">>, translate:translate(Lang, Label)},
+			       {<<"var">>, Var}],
+	 [{xmlel, <<"value">>, [], [{xmlcdata, Val}]}]}).
 
 %% @doc Get a pseudo unique Room Name. The Room Name is generated as a hash of 
 %%      the requester JID, the local time and a random salt.
@@ -681,7 +684,7 @@ flush() ->
 %%       as <<"already used">>.  But in practice, it is unique enough. See
 %%       http://xmpp.org/extensions/xep-0045.html#createroom-unique
 iq_get_unique(From) ->
-	#xmlcdata{content = sha:sha(term_to_binary([From, now(), randoms:get_string()]))}.
+	{xmlcdata, sha:sha(term_to_binary([From, now(), randoms:get_string()]))}.
 
 iq_get_register_info(Host, From, Lang) ->
     {LUser, LServer, _} = jlib:jid_tolower(From),
@@ -693,20 +696,24 @@ iq_get_register_info(Host, From, Lang) ->
 	    [] ->
 		{<<>>, []};
 	    [#muc_registered{nick = N}] ->
-		{N, [#xmlel{name = <<"registered">>}]}
+		{N, [{xmlel, <<"registered">>, [], []}]}
 	end,
     Registered ++
-	[#xmlel{name = <<"instructions">>,
-	        children = [#xmlcdata{content = translate:translate(
-	                                          Lang, <<"You need a client that supports x:data to register the nickname">>)}]},
-	 #xmlel{name = <<"x">>, attrs = [{<<"xmlns">>, ?NS_XDATA}],
-	        children = [#xmlel{name = <<"title">>,
-	                           children = [#xmlcdata{content = translate:translate(
-	                                                             Lang, <<"Nickname Registration at ">>) ++ Host}]},
-		            #xmlel{name = <<"instructions">>,
-	                           children = [#xmlcdata{content = translate:translate(
-	                                                             Lang, <<"Enter nickname you want to register">>)}]},
-		            ?XFIELD(<<"text-single">>, <<"Nickname">>, <<"nick">>, Nick)]}].
+	[{xmlel, <<"instructions">>, [],
+	  [{xmlcdata,
+	    translate:translate(
+	      Lang, <<"You need a client that supports x:data to register the nickname">>)}]},
+	 {xmlel, <<"x">>,
+	  [{<<"xmlns">>, ?NS_XDATA}],
+	  [{xmlel, <<"title">>, [],
+	    [{xmlcdata,
+	      translate:translate(
+		Lang, <<"Nickname Registration at ">>) ++ Host}]},
+	   {xmlel, <<"instructions">>, [],
+	    [{xmlcdata,
+	      translate:translate(
+		Lang, <<"Enter nickname you want to register">>)}]},
+	   ?XFIELD(<<"text-single">>, <<"Nickname">>, <<"nick">>, Nick)]}].
 
 iq_set_register_info(Host, From, Nick, Lang) ->
     {LUser, LServer, _} = jlib:jid_tolower(From),
@@ -752,11 +759,11 @@ iq_set_register_info(Host, From, Nick, Lang) ->
     end.
 
 process_iq_register_set(Host, From, SubEl, Lang) ->
-    #xmlel{children = Els} = SubEl,
+    {xmlel, _Name, _Attrs, Els} = SubEl,
     case xml:get_subtag(SubEl, <<"remove">>) of
 	false ->
 	    case xml:remove_cdata(Els) of
-		[#xmlel{name = <<"x">>} = XEl] ->
+		[{xmlel, <<"x">>, _Attrs1, _Els1} = XEl] ->
 		    case {xml:get_tag_attr_s(<<"xmlns">>, XEl),
 			  xml:get_tag_attr_s(<<"type">>, XEl)} of
 			{?NS_XDATA, <<"cancel">>} ->
@@ -786,12 +793,13 @@ process_iq_register_set(Host, From, SubEl, Lang) ->
     end.
 
 iq_get_vcard(Lang) ->
-    [#xmlel{name = <<"FN">>,
-            children = [#xmlcdata{content = <<"ejabberd/mod_muc">>}]},
-     #xmlel{name = <<"URL">>, children = [#xmlcdata{content = ?EJABBERD_URI}]},
-     #xmlel{name = <<"DESC">>,
-            children = [#xmlcdata{content = translate:translate(Lang, <<"ejabberd MUC module">>) ++
-                                    <<"\nCopyright (c) 2003-2011 ProcessOne">>}]}].
+    [{xmlel, <<"FN">>, [],
+      [{xmlcdata, <<"ejabberd/mod_muc">>}]},
+     {xmlel, <<"URL">>, [],
+      [{xmlcdata, ?EJABBERD_URI}]},
+     {xmlel, <<"DESC">>, [],
+      [{xmlcdata, translate:translate(Lang, <<"ejabberd MUC module">>) ++
+	  <<"\nCopyright (c) 2003-2011 ProcessOne">>}]}].
 
 
 broadcast_service_message(Host, Msg) ->

@@ -38,6 +38,7 @@
                  persistent = false,
                  moderated = true,
                  members_by_default = true,
+                 anons_are_visitors = false,
                  members_only = false,
                  allow_user_invites = false,
                  password_protected = false,
@@ -46,9 +47,9 @@
                  max_users = ?MAX_USERS_DEFAULT,
                  logging = false}).
 
--record(user, {jid,
-               nick,
-               role,
+-record(user, {bjid,
+               res_nick, % resource -> nick mapping
+               nick_role, % nick -> role mapping
                last_presence}).
 
 -record(activity, {message_time = 0,
