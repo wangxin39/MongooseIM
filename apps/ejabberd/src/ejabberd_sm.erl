@@ -52,6 +52,7 @@
          user_resources/2,
          get_session_pid/3,
          get_user_info/3,
+         get_user_auth_mod/3,
          get_user_ip/3
         ]).
 
@@ -161,6 +162,18 @@ get_user_info(User, Server, Resource) ->
             Conn = proplists:get_value(conn, Session#session.info),
             IP = proplists:get_value(ip, Session#session.info),
             [{node, Node}, {conn, Conn}, {ip, IP}]
+    end.
+
+get_user_auth_mod(User, Server, Resource) ->
+    LUser = jlib:nodeprep(User),
+    LServer = jlib:nameprep(Server),
+    LResource = jlib:resourceprep(Resource),
+    case ?SM_BACKEND:get_sessions(LUser, LServer, LResource) of
+        [] ->
+            offline;
+        Ss ->
+            Session = lists:max(Ss),
+            proplists:get_value(auth_module, Session#session.info)
     end.
 
 set_presence(SID, User, Server, Resource, Priority, Presence, Info) ->

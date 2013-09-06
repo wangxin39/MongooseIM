@@ -3930,7 +3930,7 @@ route_nick_message(#routed_nick_message{decide = continue_delivery, allow_pm = t
     {ok, #user{res_nick = FromResNicks}} = ?DICT:find(FromBJID, StateData#state.users),
     {_, FromNick} = lists:keyfind(FromResource, 1, FromResNicks),
     ejabberd_router:route(
-        jlib:jid_replace_resource(StateData#state.jid, FromNick), jlib:make_jid(ToJID), Packet),
+        jlib:jid_replace_resource(StateData#state.jid, FromNick), ToJID, Packet),
     StateData;
 
 route_nick_message(#routed_nick_message{decide = continue_delivery, allow_pm = true,
