@@ -52,7 +52,7 @@
 		shaper_state,
 		c2s_pid,
 		max_stanza_size,
-		xml_stream_state,
+		parser,
 		timeout}).
 
 -define(HIBERNATE_TIMEOUT, 90000).
@@ -135,14 +135,11 @@ init([Socket, SockMod, Shaper, MaxStanzaSize]) ->
 %% Description: Handling call messages
 %%--------------------------------------------------------------------
 handle_call({starttls, TLSSocket}, _From,
-	    #state{xml_stream_state = XMLStreamState,
-		   c2s_pid = C2SPid,
-		   max_stanza_size = MaxStanzaSize} = State) ->
-    close_stream(XMLStreamState),
-    NewXMLStreamState = xml_stream:new(C2SPid, MaxStanzaSize),
+	    #state{parser = Parser} = State) ->
+    NewParser = reset_parser(Parser),
     NewState = State#state{socket = TLSSocket,
 			   sock_mod = ejabberd_tls,
-			   xml_stream_state = NewXMLStreamState},
+			   parser = NewParser},
     case ejabberd_tls:recv_data(TLSSocket, "") of
 	{ok, TLSData} ->
 	    {reply, ok, process_data(TLSData, NewState), ?HIBERNATE_TIMEOUT};
@@ -150,14 +147,12 @@ handle_call({starttls, TLSSocket}, _From,
 	    {stop, normal, ok, NewState}
     end;
 handle_call({compress, ZlibSocket}, _From,
-	    #state{xml_stream_state = XMLStreamState,
-		   c2s_pid = C2SPid,
-		   max_stanza_size = MaxStanzaSize} = State) ->
-    close_stream(XMLStreamState),
-    NewXMLStreamState = xml_stream:new(C2SPid, MaxStanzaSize),
+	    #state{parser = Parser,
+		   c2s_pid = C2SPid} = State) ->
+    NewParser = reset_parser(Parser),
     NewState = State#state{socket = ZlibSocket,
 			   sock_mod = ejabberd_zlib,
-			   xml_stream_state = NewXMLStreamState},
+			   parser = NewParser},
     case ejabberd_zlib:recv_data(ZlibSocket, "") of
 	{ok, ZlibData} ->
 	    {reply, ok, process_data(ZlibData, NewState), ?HIBERNATE_TIMEOUT};
@@ -167,19 +162,12 @@ handle_call({compress, ZlibSocket}, _From,
 	{error, inflate_error} ->
 	    {stop, normal, ok, NewState}
     end;
-handle_call(reset_stream, _From,
-	    #state{xml_stream_state = XMLStreamState,
-		   c2s_pid = C2SPid,
-		   max_stanza_size = MaxStanzaSize} = State) ->
-    close_stream(XMLStreamState),
-    NewXMLStreamState = xml_stream:new(C2SPid, MaxStanzaSize),
-    Reply = ok,
-    {reply, Reply, State#state{xml_stream_state = NewXMLStreamState},
-     ?HIBERNATE_TIMEOUT};
+handle_call(reset_stream, _From, #state{ parser = Parser } = State) ->
+    Parser = reset_parser(Parser),
+    {reply, ok, State#state{parser = Parser}, ?HIBERNATE_TIMEOUT};
 handle_call({become_controller, C2SPid}, _From, State) ->
-    XMLStreamState = xml_stream:new(C2SPid, State#state.max_stanza_size),
-    NewState = State#state{c2s_pid = C2SPid,
-			   xml_stream_state = XMLStreamState},
+    Parser = exml_stream:new_parser(),
+    NewState = State#state{c2s_pid = C2SPid, parser = Parser},
     activate_socket(NewState),
     Reply = ok,
     {reply, Reply, NewState, ?HIBERNATE_TIMEOUT};
@@ -262,9 +250,9 @@ handle_info(_Info, State) ->
 %% cleaning up. When it returns, the gen_server terminates with Reason.
 %% The return value is ignored.
 %%--------------------------------------------------------------------
-terminate(_Reason, #state{xml_stream_state = XMLStreamState,
+terminate(_Reason, #state{parser = Parser,
 			  c2s_pid = C2SPid} = State) ->
-    close_stream(XMLStreamState),
+    free_parser(Parser),
     if
 	C2SPid /= undefined ->
 	    gen_fsm:send_event(C2SPid, closed);
@@ -323,11 +311,23 @@ process_data([Element|Els], #state{c2s_pid = C2SPid} = State)
     end;
 %% Data processing for connectors receivind data as string.
 process_data(Data,
-	     #state{xml_stream_state = XMLStreamState,
+	     #state{parser = Parser,
 		    shaper_state = ShaperState,
+		    max_stanza_size = MaxSize,
 		    c2s_pid = C2SPid} = State) ->
     ?DEBUG("Received XML on stream = \"~s\"", [Data]),
-    XMLStreamState1 = xml_stream:parse(XMLStreamState, Data),
+    {ok, NewParser, Elems} = exml_stream:parse(Parser, Data),
+
+    lists:foreach(fun(Elem) ->
+			  XmlSize = exml:xml_size(Elem),
+			  if
+			      XmlSize > MaxSize ->
+				  gen_fsm:send_event(C2SPid, {xmlstreamerror, "XML stanza is too big"});
+			      true ->
+				  gen_fsm:send_event(C2SPid, Elem)
+			  end
+		  end, Elems),
+
     {NewShaperState, Pause} = shaper:update(ShaperState, size(Data)),
     if
 	C2SPid == undefined ->
@@ -337,7 +337,7 @@ process_data(Data,
 	true ->
 	    activate_socket(State)
     end,
-    State#state{xml_stream_state = XMLStreamState1,
+    State#state{parser = NewParser,
 		shaper_state = NewShaperState}.
 
 %% Element coming from XML parser are wrapped inside xmlstreamelement
@@ -349,7 +349,13 @@ element_wrapper(#xmlel{} = XMLElement) ->
 element_wrapper(Element) ->
     Element.
 
-close_stream(undefined) ->
+reset_parser(undefined) ->
+    undefined;
+reset_parser(Parser) ->
+    {ok, NewParser} = exml_stream:reset_parser(Parser),
+    NewParser.
+
+free_parser(undefined) ->
     ok;
-close_stream(XMLStreamState) ->
-    xml_stream:close(XMLStreamState).
+free_parser(Parser) ->
+    exml_stream:free_parser(Parser).

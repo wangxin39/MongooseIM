@@ -59,7 +59,7 @@ rows_to_records(US, Rows) ->
     [row_to_record(US, Row) || Row <- Rows].
 
 row_to_record(US, {_UserName, SPacket}) ->
-    Packet = xml_stream:parse_element(SPacket),
+    {ok, Packet} = exml:parse(SPacket),
     To   = jlib:binary_to_jid(xml:get_tag_attr_s(<<"to">>, Packet)),
     From = jlib:binary_to_jid(xml:get_tag_attr_s(<<"from">>, Packet)),
     #offline_msg{us = US,
