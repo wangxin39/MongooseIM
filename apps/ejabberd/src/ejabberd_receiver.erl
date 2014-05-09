@@ -163,10 +163,10 @@ handle_call({compress, ZlibSocket}, _From,
 	    {stop, normal, ok, NewState}
     end;
 handle_call(reset_stream, _From, #state{ parser = Parser } = State) ->
-    Parser = reset_parser(Parser),
-    {reply, ok, State#state{parser = Parser}, ?HIBERNATE_TIMEOUT};
+    NewParser = reset_parser(Parser),
+    {reply, ok, State#state{parser = NewParser}, ?HIBERNATE_TIMEOUT};
 handle_call({become_controller, C2SPid}, _From, State) ->
-    Parser = exml_stream:new_parser(),
+    {ok, Parser} = exml_stream:new_parser(),
     NewState = State#state{c2s_pid = C2SPid, parser = Parser},
     activate_socket(NewState),
     Reply = ok,
@@ -324,7 +324,12 @@ process_data(Data,
 			      XmlSize > MaxSize ->
 				  gen_fsm:send_event(C2SPid, {xmlstreamerror, "XML stanza is too big"});
 			      true ->
-				  gen_fsm:send_event(C2SPid, Elem)
+				  if
+				      element(1, Elem) == xmlel ->
+					  gen_fsm:send_event(C2SPid, {xmlstreamelement, Elem});
+				      true ->
+					  gen_fsm:send_event(C2SPid, Elem)
+				  end
 			  end
 		  end, Elems),
 
