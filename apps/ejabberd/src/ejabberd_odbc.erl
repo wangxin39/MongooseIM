@@ -165,7 +165,7 @@ sql_call({_Host, Pid}, Msg) when is_pid(Pid) ->
 
 %% @doc perform a harmless query on all opened connexions to avoid connexion close.
 keep_alive(PID) ->
-    ?GEN_FSM:sync_send_event(PID, {sql_cmd, {sql_query, ?KEEPALIVE_QUERY}, now()},
+    ?GEN_FSM:sync_send_event(PID, {sql_cmd, {sql_query, [?KEEPALIVE_QUERY]}, now()},
                              ?KEEPALIVE_TIMEOUT).
 
 %% This function is intended to be used from inside an sql_transaction:
@@ -569,7 +569,7 @@ sql_query_internal(Query) ->
     State = get(?STATE_KEY),
     Res = case State#state.db_type of
               odbc ->
-                  binaryze_odbc(odbc:sql_query(State#state.db_ref, Query));
+                  binaryze_odbc(odbc:sql_query(State#state.db_ref, Query, 5000));
               pgsql ->
                   ?DEBUG("Postres, Send query~n~p~n", [Query]),
                   pgsql_to_odbc(pgsql:squery(State#state.db_ref, Query));
