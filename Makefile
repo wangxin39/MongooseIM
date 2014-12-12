@@ -14,7 +14,7 @@ deps: rebar
 	./rebar get-deps
 
 clean: rebar
-	./rebar clean
+	./rebar -r clean
 
 quick_compile: rebar
 	./rebar $(OPTS) compile skip_deps=true
@@ -28,8 +28,8 @@ reload_dev: quick_compile
 	rsync -uW ./apps/ejabberd/ebin/*beam ./dev/mongooseim_node1/lib/$$E/ebin/ ;\
 
 ct: deps quick_compile
-	@if [ "$(SUITE)" ]; then ./rebar -q ct suite=$(SUITE) skip_deps=true;\
-	else ./rebar -q ct skip_deps=true; fi
+	@if [ "$(SUITE)" ]; then ./rebar -r -q ct suite=$(SUITE) skip_deps=true;\
+	else ./rebar -r -q ct skip_deps=true; fi
 
 test: test_deps
 	cd test/ejabberd_tests; make test
@@ -57,7 +57,7 @@ show_test_results:
 
 eunit: rebar deps
 	./rebar compile
-	./rebar skip_deps=true eunit
+	./rebar -r skip_deps=true eunit
 
 rel: rebar deps
 	./rebar compile generate -f
