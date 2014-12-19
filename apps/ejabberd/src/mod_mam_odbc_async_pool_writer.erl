@@ -32,6 +32,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-define(SUPERVISOR_MODULE, mod_mam_odbc_async_pool_writer_sup).
 
 -include("ejabberd.hrl").
 -include("jlib.hrl").
@@ -80,6 +81,7 @@ worker_number(Host, ArcID) ->
 %% Starting and stopping functions for users' archives
 
 start(Host, Opts) ->
+    start_supervisor(Host),
     start_workers(Host),
     case gen_mod:get_module_opt(Host, ?MODULE, pm, false) of
         true ->
@@ -107,7 +109,7 @@ stop(Host) ->
         false ->
             ok
     end,
-    stop_workers(Host).
+    stop_supervisor(Host).
 
 
 %% ----------------------------------------------------------------------
@@ -162,8 +164,23 @@ start_workers(Host) ->
     [start_worker(WriterProc, N, Host)
      || {N, WriterProc} <- worker_names(Host)].
 
-stop_workers(Host) ->
-    [stop_worker(WriterProc) ||  {_, WriterProc} <- worker_names(Host)].
+start_supervisor(Host) ->
+    SupName = supervisor_name(Host),
+    Spec = {SupName,
+            {?SUPERVISOR_MODULE, start_link, [SupName]},
+            permanent,
+            5000,
+            supervisor,
+            [?SUPERVISOR_MODULE]},
+    supervisor:start_child(ejabberd_sup, Spec).
+
+stop_supervisor(Host) ->
+    Supervisor = supervisor_name(Host),
+    supervisor:terminate_child(ejabberd_sup, Supervisor),
+    supervisor:delete_child(ejabberd_sup, Supervisor).
+
+supervisor_name(Host) ->
+    gen_mod:get_module_proc(Host, ?SUPERVISOR_MODULE).
 
 start_worker(WriterProc, N, Host) ->
     WriterChildSpec =
@@ -173,12 +190,7 @@ start_worker(WriterProc, N, Host) ->
      5000,
      worker,
      [mod_mam_odbc_async_writer]},
-    supervisor:start_child(ejabberd_sup, WriterChildSpec).
-
-stop_worker(Proc) ->
-    supervisor:terminate_child(ejabberd_sup, Proc),
-    supervisor:delete_child(ejabberd_sup, Proc).
-
+    supervisor:start_child(supervisor_name(Host), WriterChildSpec).
 
 start_link(ProcName, N, Host) ->
     gen_server:start_link({local, ProcName}, ?MODULE, [Host, N], []).
